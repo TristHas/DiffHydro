@@ -3,6 +3,20 @@ from collections import defaultdict
 import pandas as pd
 import torch
 
+def nse_fn(o: torch.Tensor, lbl: torch.Tensor, 
+               eps: float = 1e-12, dim: int = -1):
+    """
+        Memory efficient NSE function using the formula:
+        MSE(o,lbl)=⟨o^2⟩ + ⟨lbl^2⟩ − 2⟨o·lbl⟩
+    """
+    T = o.size(dim)
+    ss_oo = torch.einsum('...t,...t->...', o,   o)
+    ss_ll = torch.einsum('...t,...t->...', lbl, lbl)
+    ss_ol = torch.einsum('...t,...t->...', o,   lbl)
+    mse   = (ss_oo + ss_ll - 2*ss_ol) / T
+    var_y = torch.var(lbl, dim=dim, unbiased=False)
+    return 1.0 - mse / (var_y.clamp_min(eps))
+    
 class Timer:
     def __init__(self, device="cuda"):
         self.device = device

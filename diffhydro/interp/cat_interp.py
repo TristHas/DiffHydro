@@ -4,7 +4,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-from ..structs import TimeSeriesThDF
+from ..structs import TimeSeriesThDF, BufferList
 
 def index_precompute(cin, cout,            # (N,) int64
                      map_river, map_pixel, # (R,) int64  (unordered OK)
@@ -82,20 +82,26 @@ class CatchmentInterpolator(nn.Module):
     def __init__(self, g, pixel_df, weight_df):
         """
             weight_df: pd.DataFrame with index values in g nodes and columns pixel_idxs and area_sqm_total
+            Maybe here we should assume that weight_df only contains the relevant pixels.
+            So that when we interpolate the kernel, we interpolate it only for the needed inputs.
         """
         super().__init__()
         input_pixel_idxs = pixel_df._columns
         output_cat_idxs = g.nodes_idx
         
         weight_subset = weight_df.loc[output_cat_idxs.index] # First only select the relevant rows
+        # Assert that only the needed input pixels and output catchments are included in the weight_df
+        # This is tested by indexation at the next lines anyway
         
         self.register_buffer("dest_idxs", torch.tensor(output_cat_idxs[weight_subset.index].values, dtype=torch.long))
         self.register_buffer("src_idxs",  torch.tensor(input_pixel_idxs[weight_subset["pixel_idx"]].values, dtype=torch.long))
         self.register_buffer("weights",   torch.tensor(weight_subset["area_sqm_total"].values, dtype=torch.float))
+        #self.register_buffer("pix_idxs",   torch.tensor(input_pixel_idxs.values, dtype=torch.float))
         
         self.map_inp = input_pixel_idxs
         self.map_out = output_cat_idxs
         self.n_cats = len(self.map_out)
+        self.n_pix = len(self.map_inp)
         
     def interpolate_runoff(self, runoff):
         """
@@ -115,12 +121,12 @@ class CatchmentInterpolator(nn.Module):
         """
             Here, coords_pixel are aligned to pix_idxs ordering.
         """
-        irfs_agg_pixel, co, pi = river_to_pixel_gpu_pt(irfs_agg,                      # [N, F] float32/64  (GPU)
+        irfs_agg_pixel, co, pi = river_to_pixel_gpu_pt(irfs_agg,                       # [N, F] float32/64  (GPU)
                                                        coords[:,1], coords[:,0],       # [N] int32/int64
                                                        self.dest_idxs, self.src_idxs,  # [R] int32/int64 (NOT necessarily sorted)
                                                        self.weights)
         coords_pixel = torch.stack([co, pi]).t()
-        kernel_size =  (self.n_cats, self.pix_idxs.shape[0])
+        kernel_size =  (self.n_cats, self.n_pix)
         return irfs_agg_pixel, coords_pixel, kernel_size
 
     def forward(self, inp):
@@ -128,7 +134,9 @@ class CatchmentInterpolator(nn.Module):
             return self.interpolate_runoff(inp)
         elif isinstance(inp, SparseKernel):
             return self.interpolate_kernel(inp.values, inp.coords)
-
+        else:
+            raise NotImplementedError()
+            
 class StagedCatchmentInterpolator(nn.Module):
     def __init__(self, gs, pixel_df, weight_df):
         """
@@ -137,9 +145,18 @@ class StagedCatchmentInterpolator(nn.Module):
         input_pixel_idxs = pixel_df._columns
         output_cat_idxs = gs.nodes_idx
         
-        weight_subset = weight_df.loc[output_cat_idxs.index] # First only select the relevant rows
-        self.cis = nn.ModuleList([CatchmentInterpolator(g, pixel_df, weight_subset) for g in tqdm(gs)])
+        weight_df = weight_df.loc[output_cat_idxs.index] # First only select the relevant rows
+        pixel_columns, pixel_idxs, cis = [], [], []
+        for g in tqdm(gs):
+            weight_subset = weight_df.loc[g.nodes]
+            pixel_col = input_pixel_idxs[weight_subset["pixel_idx"].unique()] #weight_subset["pixel_idx"].unique() #
+            pixel_subset_df = pixel_df[pixel_col.index]
+            
+            pixel_idxs.append(torch.from_numpy(pixel_col.values))
+            cis.append(CatchmentInterpolator(g, pixel_subset_df, weight_subset))
         
+        self.cis = nn.ModuleList(cis)
+        self.pix_idxs = BufferList(pixel_idxs)
         self.map_inp = input_pixel_idxs
         self.map_out = output_cat_idxs
         self.n_cats = len(self.map_out)
@@ -154,15 +171,18 @@ class StagedCatchmentInterpolator(nn.Module):
         return self.cis[idx]
 
     def read_pixels(self, runoff, idx):
-        return runoff.values[:,self.cis[idx].pix_idxs][None]
+        return TimeSeriesThDF(runoff.values[:,self.pix_idxs[idx]],
+                              columns=self.cis[idx].map_inp.index, 
+                              index=runoff._index)
 
     def interpolate_runoff(self, runoff, idx):
-        return self[idx].interpolate_runoff(runoff)
+        local_runoff = self.read_pixels(runoff, idx)
+        return self[idx].interpolate_runoff(local_runoff)
     
     def yield_all_runoffs(self, runoff, display_progress=False):
-        if not display_progress: tqdm = lambda x:x
-        for i in tqdm(range(len(self))):
-            yield self.interpolate_runoff(runoff, i)
+        pbar = tqdm if display_progress else lambda y: y
+        for idx in pbar(range(len(self))):
+            yield self.interpolate_runoff(runoff, idx)
 
     def interpolate_kernel(self, idx, irfs_agg, coords):
         return self[idx].interpolate_kernel(irfs_agg, coords)

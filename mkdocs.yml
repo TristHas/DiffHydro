@@ -1,0 +1,38 @@
+site_name: "DiffHydro Documentation"
+site_description: "Guides and references for building differentiable hydrological pipelines with diffhydro."
+theme:
+  name: material
+  logo: diffhydro.png
+  features:
+    - content.code.copy
+extra_css:
+  - stylesheets/extra.css
+nav:
+  - Overview: index.md
+  - Quickstart: quickstart.md
+  - Core Functionalities:
+      - Catchment Interpolation: core-functionalities/catchment-interpolation.md
+      - Runoff Generation: core-functionalities/runoff.md
+      - River Routing: core-functionalities/routing.md
+  - Core Helper Structures:
+      - TimeSeriesDf: core-helper-structures/timeseriesdf.md
+      - JointSampler: core-helper-structures/joint-sampler.md
+  - Pipelines:
+      - Simple Simulation: pipelines/simple-simulation.md
+      - Routing Calibration: pipelines/routing-calibration.md
+      - Routing Parameter Learning: pipelines/routing-parameter-learning.md
+      - Routing + Runoff Learning: pipelines/routing-and-runoff-learning.md
+  - Advanced Usage:
+      - Pipeline Fusion: advanced-usage/pipeline-fusion.md
+      - Generator Streaming: advanced-usage/generator-streaming.md
+  - Examples:
+      - GeoGLOWS: examples/geoglows.md
+      - Ono River: examples/ono-river.md
+      - JPdH: examples/jpdh.md
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences

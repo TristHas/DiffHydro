@@ -178,7 +178,13 @@ class StagedCatchmentInterpolator(nn.Module):
     def interpolate_runoff(self, runoff, idx):
         local_runoff = self.read_pixels(runoff, idx)
         return self[idx].interpolate_runoff(local_runoff)
-    
+
+    def interpolate_all_runoff(self, runoff):
+        values = torch.cat([x.values for x in self.yield_all_runoffs(runoff)], dim=1)
+        return TimeSeriesThDF(values, 
+                              columns=self.map_out.index, 
+                              index=runoff._index)
+        
     def yield_all_runoffs(self, runoff, display_progress=False):
         pbar = tqdm if display_progress else lambda y: y
         for idx in pbar(range(len(self))):

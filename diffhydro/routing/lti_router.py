@@ -29,6 +29,11 @@ class LTIStagedRouter(nn.Module):
         super().__init__()
         self.core = LTIStagedRouterCore(**kwargs)
 
+    def forward(self, runoff_df: TimeSeriesThDF, g, params=None) -> TimeSeriesThDF:
+        """
+        """
+        return self.route_all_clusters(runoff_df, g, params)
+        
     def route_one_cluster(self,
                           x_df: TimeSeriesThDF,
                           gs,
@@ -72,8 +77,8 @@ class LTIStagedRouter(nn.Module):
                                  index=x_df.index)
 
     def init_upstream_discharges(self, xs_df, gs, cluster_idx, 
-                                        params=None, 
-                                        display_progress=False):
+                                 params=None, 
+                                 display_progress=False):
         """
         """
         if isinstance(xs_df, TimeSeriesThDF):

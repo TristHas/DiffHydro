@@ -1,0 +1,35 @@
+[project]
+name = "diffhydro"
+version = "0.1.0"
+description = "Differentiable hydrological pipelines built on DiffRoute and PyTorch"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+authors = [
+    {name = "Tristan Hascoet", email = "tristan.hascoet@gmail.com"}
+]
+dependencies = [
+    "diffroute>=0.1.0",
+    "torch>=2.0.0",
+    "pandas",
+    "numpy",
+    "tqdm"
+]
+
+[project.optional-dependencies]
+examples = [
+    "requests",
+    "xarray",
+    "s3fs"
+]
+
+[project.urls]
+Homepage = "https://github.com/TristHas/DiffHydro"
+Repository = "https://github.com/TristHas/DiffHydro"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["diffhydro"]

@@ -1,4 +1,4 @@
 from .interp import CatchmentInterpolator, StagedCatchmentInterpolator
 from .routing import LTIRouter, LTIStagedRouter
 from .runoff import Runoff
-from .structs import TimeSeriesThDF
+from .structs import TimeSeriesThDF, RivTree, RivTreeCluster

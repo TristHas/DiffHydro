@@ -82,7 +82,7 @@ class LTIStagedRouter(nn.Module):
         """
         """
         if isinstance(xs_df, TimeSeriesThDF):
-            xs_tensor_gen = (x_df.values[:,s:e] \
+            xs_tensor_gen = (xs_df.values[:,s:e] \
                              for s,e in gs.node_ranges) 
         else:
             xs_tensor_gen = (x_df.values for x_df in xs_df) 
@@ -92,3 +92,5 @@ class LTIStagedRouter(nn.Module):
              params=params,
              display_progress=display_progress
         )
+
+    

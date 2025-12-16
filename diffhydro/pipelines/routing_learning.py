@@ -54,14 +54,12 @@ class LearnedRouter(nn.Module):
         router = self.router if isinstance(g, RivTree) else self.staged_router
         return router(x, g, params=self.read_params(g))
 
-    def init_upstream_discharges(self, x, g, cluster_idx,
-                                        display_progress=False):
+    def init_upstream_discharges(self, x, g, cluster_idx):
         assert isinstance(g, RivTreeCluster)
         params = self.read_params(g)
         return self.staged_router.init_upstream_discharges(
                                         x, g, cluster_idx,
-                                        params=params, 
-                                        display_progress=display_progress
+                                        params=params
         )
 
     def route_one_cluster(self, x, g, cluster_idx, transfer_bucket=None):

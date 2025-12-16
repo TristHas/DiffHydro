@@ -1,7 +1,11 @@
 import time
 from collections import defaultdict
+
+import numpy as np
 import pandas as pd
+
 import torch
+import torch.nn as nn
 
 def nse_fn(o: torch.Tensor, lbl: torch.Tensor, 
                eps: float = 1e-12, dim: int = -1):
@@ -16,7 +20,36 @@ def nse_fn(o: torch.Tensor, lbl: torch.Tensor,
     mse   = (ss_oo + ss_ll - 2*ss_ol) / T
     var_y = torch.var(lbl, dim=dim, unbiased=False)
     return 1.0 - mse / (var_y.clamp_min(eps))
-    
+
+
+class SimpleTimeSeriesSampler(nn.Module):
+    def __init__(self, x, y, init_len, pred_len):
+        super().__init__()
+        assert (x.index==y.index).all(), "Index misalignment"
+        assert (x.columns==y.columns).all(), "Columns misalignment"
+        self.x = x
+        self.y = y
+        self.init_len = init_len
+        self.pred_len = pred_len
+        self.n_samples = self.x.shape[-1] - self.init_len - self.pred_len
+
+    def to(self, *args, **kwargs):
+        self.x = self.x.to(*args, **kwargs)
+        self.y = self.y.to(*args, **kwargs)
+        
+    def __getitem__(self, idx):
+        start_x = self.x.index[idx]
+        start_y = self.x.index[idx+self.init_len]
+        end = self.x.index[idx+self.init_len+self.pred_len]
+        return self.x[:,start_x:end], self.y[:,start_y:end]
+        
+    def __len__(self):
+        return self.n_samples
+
+    def sample(self):
+        idx = np.random.choice(self.n_samples)
+        return self[idx]
+        
 class Timer:
     def __init__(self, device="cuda"):
         self.device = device

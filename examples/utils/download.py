@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-import s3fs
+ZENODO_RECORD = 17873745
 
 # --------- utils ---------
 def _ensure_dir(p: Path) -> Path:
@@ -21,90 +21,56 @@ def _strip_s3_scheme(path: str) -> str:
     return path.split("://", 1)[1] if "://" in path else path
 
 
-def _download_s3_prefix(fs: s3fs.S3FileSystem, s3_prefix: str, local_dir: Path) -> Path:
-    """
-    Recursively download all files under an S3 prefix into a local directory.
+def download_full_geoglows_data(root, exclude_discharge=True):
+    try:
+        from huggingface_hub import snapshot_download
+    except:
+        Exception("Dataset download requires huggingface_hub. Please install it first with pip install huggingface_hub")
+    ignore_patterns="retro_feather/**" if exclude_discharge else None
+    local_dir = snapshot_download(
+        repo_id="prediction2/diffroute_exp",  # or any other dataset id
+        repo_type="dataset",
+        local_dir=root / "geoglows",      # where to put the files
+        ignore_patterns=ignore_patterns
+    )
+    print("Downloaded to:", local_dir)
 
-    Parameters
-    ----------
-    fs : s3fs.S3FileSystem
-        An initialized s3fs filesystem (pass once to reuse connections).
-    s3_prefix : str
-        e.g., 's3://geoglows-v2/routing-configs/vpu=305/'
-    local_dir : Path
-        Local directory to place files under.
-    """
-    local_dir = _ensure_dir(local_dir)
-    normalized_prefix = _strip_s3_scheme(s3_prefix).rstrip("/") + "/"
+def download_rapid_config(root, idx=305):
+    import os
+    try:
+        from huggingface_hub import HfApi, hf_hub_download
+    except:
+        Exception("Download requires huggingface_hub. Please install it first with pip install huggingface_hub")
+    
+    REPO_ID = "prediction2/diffroute_exp"
+    REPO_TYPE = "dataset"
+    folder = f"configs/{idx}" 
+    
+    api = HfApi()
+    local_dir = root / "geoglows" / "rapid_config" / str(idx)
 
-    # List all remote files under the prefix
-    objects = fs.find(s3_prefix)
-    if not objects:
-        return local_dir
+    os.makedirs(local_dir, exist_ok=True)
 
-    for remote_path in tqdm(objects, desc=f"Downloading {s3_prefix}", unit="file"):
-        remote_norm = _strip_s3_scheme(remote_path)
-        if not remote_norm.startswith(normalized_prefix):
-            rel = Path(remote_norm).name
-        else:
-            rel = remote_norm[len(normalized_prefix):]
-        if not rel:
-            continue
-        dest = local_dir / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        fs.get(remote_path, str(dest))
-    return local_dir
+    for f in api.list_repo_files(repo_id=REPO_ID, repo_type=REPO_TYPE):
+        if f.startswith(folder + "/"):
+            hf_hub_download(
+                repo_id=REPO_ID,
+                repo_type=REPO_TYPE,
+                filename=f,
+                local_dir=local_dir,
+            )
 
-def download_rapid_config(root: Path, vpu: str | int) -> Path:
-    """
-        Download routing configuration for a given VPU using s3fs.
-    """
-    vpu = str(vpu)
-    output_dir = _ensure_dir(root / "geoglows" / "rapid_config" / vpu)
-    input_url = f"s3://geoglows-v2/routing-configs/vpu={vpu}/"
-    fs = s3fs.S3FileSystem(anon=True)
-    _download_s3_prefix(fs, input_url, output_dir)
-    return output_dir
-
-def download_tdxhydro_attributes(root: Path, vpu: str | int) -> Path:
-    """
-        Download TDXHydro attributes for a given VPU using s3fs.
-    """
-    vpu = str(vpu)
-    output_dir = _ensure_dir(root / "geoglows" / "tdxhydro" / vpu)
-    input_url = f"s3://geoglows-v2/hydrography/vpu={vpu}/"
-    fs = s3fs.S3FileSystem(anon=True)
-    _download_s3_prefix(fs, input_url, output_dir)
-    return output_dir
-
-def read_remote_restrospective_q(river_id):
-    """
-        Read the retrospective daily discharge zarr remotely via s3fs.
-    """
-    bucket_uri = 's3://geoglows-v2/retrospective/daily.zarr'
-    region_name = 'us-west-2'
-    s3 = s3fs.S3FileSystem(anon=True, client_kwargs=dict(region_name=region_name))
-    s3store = s3fs.S3Map(root=bucket_uri, s3=s3, check=False)
-    ds = xr.open_zarr(s3store)
-    return ds["Q"].sel(river_id=river_id).load().to_pandas()
-
-def list_vpus() -> list[str]:
-    """
-    Return a sorted list of VPU IDs (as strings) available under
-    s3://geoglows-v2/routing-configs/
-    e.g., ["101", "102", "103", ...]
-    """
-    fs = s3fs.S3FileSystem(anon=True)
-    entries = fs.ls("s3://geoglows-v2/routing-configs/")
-    vpus: list[str] = []
-    for entry in entries:
-        last = entry.rstrip("/").split("/")[-1]  # "vpu=305"
-        if last.startswith("vpu="):
-            v = last.split("=", 1)[1]
-            if v.isdigit():
-                vpus.append(v)
-    vpus = [str(x) for x in sorted(map(int, vpus))]
-    return vpus
+def download_geoglows_without_discharge(root):
+    try:
+        from huggingface_hub import snapshot_download
+    except:
+        Exception("Dataset download requires huggingface_hub. Please install it first with pip install huggingface_hub")
+    local_dir = snapshot_download(
+        repo_id="prediction2/diffroute_exp",  # or any other dataset id
+        repo_type="dataset",
+        local_dir=root,      # where to put the files
+    )
+    print("Downloaded to:", local_dir)
 
 # --------- Zenodo helpers  ---------
 def download_zenodo_file(url: str, dest_path: str):
@@ -117,7 +83,7 @@ def download_zenodo_file(url: str, dest_path: str):
         Direct download URL to the file (e.g. Zenodo file link).
     dest_path : str
         Path to save the downloaded file. Can include the desired filename.
-        Example: "/data/interp/interp_weight_305.pkl"
+        Example: "/data/interp/interp_weight_305.feather"
     """
     dest = Path(dest_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -134,50 +100,54 @@ def download_zenodo_file(url: str, dest_path: str):
                     pbar.update(len(chunk))
     return dest
 
+def process_single_vpu_data(root, device="cpu"):
+    from diffhydro import TimeSeriesThDF, CatchmentInterpolator
+    from diffhydro.io import read_rapid_graph
+
+    runoff_path = root / 'geoglows' / 'input' / '305_daily_sparse_runoff.feather'
+    interp_weight_path = root / 'geoglows' / 'input' / '305_interp_weight.feather'
+    rapid_path = root / "geoglows" / "rapid_config" / "305"
+    
+    # Load input pixel-wise runoff.
+    pixel_runoff = pd.read_feather(runoff_path) # Convert values in m3 / s
+    pixel_runoff = TimeSeriesThDF.from_pandas(pixel_runoff).to(device) # Convert pandas DataFrame to TimeSeriesThDF
+    # Interpolate the pixel-wise runoffs onto the graph catchments 
+    interp_df = pd.read_feather(interp_weight_path)
+    g = read_rapid_graph(rapid_path)
+    cat = CatchmentInterpolator(g, pixel_runoff, interp_df).to(device)
+    runoff = cat(pixel_runoff)
+    # Dump as netcdf
+    runoff = xr.DataArray(runoff.to_pandas(), dims=["time", "river_id"])
+    runoff.to_netcdf(rapid_path / "runoff.nc")
+
+    
 def download_single_vpu_data(root: Path):
-    dest_path = root / "geoglows" / "input" / "305_daily_sparse_runoff.pkl"
+    dest_path = root / "geoglows" / "input" / "305_daily_sparse_runoff.feather"
     download_zenodo_file(
-        "https://zenodo.org/records/17346036/files/runoff_pixel_305.pkl",
+        f"https://zenodo.org/records/{ZENODO_RECORD}/files/305_daily_sparse_runoff.feather",
         str(dest_path),
     )
-    dest_path = root / "geoglows" / "input" / "305_interp_weight.pkl"
+    dest_path = root / "geoglows" / "input" / "305_interp_weight.feather"
     download_zenodo_file(
-        "https://zenodo.org/records/17346036/files/interp_weight_305.pkl",
+        f"https://zenodo.org/records/{ZENODO_RECORD}/files/305_interp_weight.feather",
         str(dest_path),
     )
     download_rapid_config(root, 305)
+    process_single_vpu_data(root)
 
 def download_input_runoff(root: Path):
     dest_path = root / "geoglows" / "input" / "daily_sparse_runoff.feather"
     download_zenodo_file(
-        "https://zenodo.org/records/17346036/files/daily_sparse_runoff.feather",
+        f"https://zenodo.org/records/{ZENODO_RECORD}/files/daily_sparse_runoff.feather",
         str(dest_path),
     )
 
 def download_interp_weights(root: Path):
-    dest_path = root / "geoglows" / "input" / "interp_weight.pkl"
+    dest_path = root / "geoglows" / "input" / "interp_weight.feather"
     download_zenodo_file(
-        "https://zenodo.org/records/17346036/files/interp_weight.pkl",
+        f"https://zenodo.org/records/{ZENODO_RECORD}/files/interp_weight.feather",
         str(dest_path),
     )
-
-def download_full_geoglows_data(root: Path):
-    """
-    Download:
-      - large input runoff (Zenodo, ~16GB)
-      - catchment interpolation weights (~500MB)
-      - RAPID configuration dirs for all available VPUs from the public S3 bucket
-    """
-    print("Downloading large input runoff (~16GB), it may take a while...")
-    download_input_runoff(root)
-
-    print("Downloading catchment interpolation DataFrame (~500MB)...")
-    download_interp_weights(root)
-
-    print("Downloading RAPID configuration files from S3...")
-    vpus = list_vpus()
-    for vpu in tqdm(vpus, desc="VPUs"):
-        download_rapid_config(root, vpu)
 
 def download_ono(root: Path) -> Path:
     """
@@ -199,7 +169,7 @@ def download_ono(root: Path) -> Path:
 
     # Download the zip file
     download_zenodo_file(
-        "https://zenodo.org/records/17346036/files/ono.zip",
+        f"https://zenodo.org/records/{ZENODO_RECORD}/files/ono.zip",
         str(zip_path),
     )
 

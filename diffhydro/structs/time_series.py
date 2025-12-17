@@ -17,8 +17,8 @@ class TimeSeriesThDF(nn.Module):
     def __init__(
         self,
         values: torch.Tensor,  # accepts [C,T] or [B,C,T]; stored as [B,C,T]
-        columns,
-        index,
+        columns = None,
+        index = None,
         *,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
@@ -43,6 +43,11 @@ class TimeSeriesThDF(nn.Module):
 
         B, C, T = values.shape
 
+        if columns is None:
+            columns = np.arange(C)
+        if index is None:
+            index = np.arange(T)
+        
         if len(columns) != C:
             raise ValueError(f"len(columns)={len(columns)} != n_cols={C}")
         if len(index) != T:

@@ -14,7 +14,7 @@ import pandas as pd
 import torch
 import networkx as nx
 
-from diffhydro.structs import TimeSeriesThDF
+from diffhydro import DataTensor, BATCH_DIM, SPATIAL_DIM, TIME_DIM
 from diffhydro.interp import CatchmentInterpolator
 from diffhydro.routing import LTIRouter as HydroRouter
 from diffroute import RivTree
@@ -35,13 +35,20 @@ riv_tree = RivTree(g, irf_fn="linear_storage", include_index_diag=False)
 
 ## 3. Create synthetic forcings
 
-Assume you ingested gridded forcings for three pixels over a one-week horizon. Wrap them in a `TimeSeriesThDF` so metadata (pixel IDs, timeline) travels with the tensor.
+Assume you ingested gridded forcings for three pixels over a one-week horizon. Wrap them in a `DataTensor` so metadata (pixel IDs, timeline) travels with the tensor.
 
 ```python
 hours = pd.date_range("2024-01-01", periods=168, freq="H")
 pixels = ["pixel_a", "pixel_b", "pixel_c"]
-forcing_tensor = torch.rand(1, len(pixels), len(hours))  # [batch=1, pixels, time]
-pixel_series = TimeSeriesThDF(forcing_tensor, columns=pixels, index=hours)
+forcing_df = pd.DataFrame(
+    torch.rand(len(hours), len(pixels)).numpy(),
+    index=hours,
+    columns=pixels,
+)
+pixel_series = (
+    DataTensor.from_pandas(forcing_df, dims=(SPATIAL_DIM, TIME_DIM))
+    .expand_dims(BATCH_DIM, axis=0)
+)
 ```
 
 ## 4. Map pixels to catchments
@@ -61,7 +68,7 @@ interp = CatchmentInterpolator(riv_tree, pixel_series, weight_df)
 catchment_runoff = interp(pixel_series)
 ```
 
-`catchment_runoff` is still a `TimeSeriesThDF`, now aligned to the catchment IDs of the routing graph.
+`catchment_runoff` is still a `DataTensor`, now aligned to the catchment IDs of the routing graph.
 
 ## 5. Route the flows
 
@@ -72,7 +79,7 @@ router = HydroRouter(max_delay=48, dt=1)
 discharge = router(catchment_runoff, riv_tree)
 ```
 
-The result is a `TimeSeriesThDF` with routed discharge per catchment.
+The result is a `DataTensor` with routed discharge per catchment.
 
 ## Where to go next
 - Replace the synthetic forcings with outputs from a neural runoff model (see `diffhydro.runoff.Runoff`).

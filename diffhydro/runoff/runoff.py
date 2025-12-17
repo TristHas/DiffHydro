@@ -1,8 +1,7 @@
-import torch
 import torch.nn as nn
-import itertools
 
-from ..structs import TimeSeriesThDF
+from ..structs import DataTensor
+from ..structs.time_series import ensure_bst_dims, datatensor_like
 from .lstm import LSTMModel
 
 class Runoff(nn.Module):
@@ -13,8 +12,13 @@ class Runoff(nn.Module):
         super().__init__()
         self.core = LSTMModel(**kwargs)
 
-    def forward(self, inp_df: TimeSeriesThDF) -> TimeSeriesThDF:
-        y = self.core(inp_df.values) 
-        return TimeSeriesThDF(y,
-                              columns=inp_df.columns,
-                              index=inp_df.index)
+    def forward(self, inp_df: DataTensor) -> DataTensor:
+        ensure_bst_dims(inp_df)
+        batch, spatial, time = inp_df.shape
+        flattened = inp_df.values.reshape(batch * spatial, time, 1)
+        y = self.core(flattened)
+        reshaped = y.view(batch, spatial, time, -1)
+        if reshaped.shape[-1] != 1:
+            raise ValueError("Runoff model is expected to output a single feature.")
+        reshaped = reshaped.squeeze(-1)
+        return datatensor_like(inp_df, reshaped)

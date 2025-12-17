@@ -7,6 +7,10 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
+from .structs import DataTensor
+from .structs.time_series import ensure_bst_dims, SPATIAL_DIM, TIME_DIM
+
+
 def nse_fn(o: torch.Tensor, lbl: torch.Tensor, 
            var_y = None,
            eps: float = 1e-12, dim: int = -1):
@@ -25,11 +29,14 @@ def nse_fn(o: torch.Tensor, lbl: torch.Tensor,
 
 
 class SimpleTimeSeriesSampler(nn.Module):
-    def __init__(self, x, y, init_len, pred_len):
+    def __init__(self, x: DataTensor, y: DataTensor, init_len, pred_len):
         super().__init__()
-        assert (x.index==y.index).all(), "Index misalignment"
-        if len(x.columns)==len(y.columns):
-            assert (x.columns==y.columns).all(), "Columns misalignment"
+        ensure_bst_dims(x)
+        ensure_bst_dims(y)
+        if x.coords[TIME_DIM] != y.coords[TIME_DIM]:
+            raise ValueError("Index misalignment")
+        if x.coords[SPATIAL_DIM] != y.coords[SPATIAL_DIM]:
+            raise ValueError("Columns misalignment")
         self.x = x
         self.y = y
         self.init_len = init_len
@@ -41,10 +48,12 @@ class SimpleTimeSeriesSampler(nn.Module):
         self.y = self.y.to(*args, **kwargs)
         
     def __getitem__(self, idx):
-        start_x = self.x.index[idx]
-        start_y = self.x.index[idx+self.init_len]
-        end = self.x.index[idx+self.init_len+self.pred_len]
-        return self.x[:,start_x:end], self.y[:,start_y:end]
+        start = idx
+        middle = idx + self.init_len
+        end = idx + self.init_len + self.pred_len
+        x_slice = self.x.isel(time=slice(start, end))
+        y_slice = self.y.isel(time=slice(middle, end))
+        return x_slice, y_slice
         
     def __len__(self):
         return self.n_samples

@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
-from .. import TimeSeriesThDF, Runoff, nse_fn
+from .. import DataTensor, Runoff, nse_fn, SPATIAL_DIM, TIME_DIM
+from ..structs.time_series import ensure_bst_dims, datatensor_like
 from .routing_learning import LearnedRouter, MLP 
 from tqdm.auto import tqdm
 
@@ -18,10 +19,11 @@ PARAMS_BOUNDS = {
 MS_TO_MMKM2 = 10**12 / (24 * 3600 * 10**9)
 RUNOFF_STD  = 12
 
-def mm_to_m3s(runoff, cat_area):
-    return TimeSeriesThDF(runoff.values * cat_area[None,:,None] * MS_TO_MMKM2 * RUNOFF_STD,
-                          columns=runoff.columns,
-                          index=runoff.index)
+def mm_to_m3s(runoff: DataTensor, cat_area):
+    ensure_bst_dims(runoff)
+    scale = cat_area.to(runoff.values.device).view(1, -1, 1)
+    values = runoff.values * scale * MS_TO_MMKM2 * RUNOFF_STD
+    return datatensor_like(runoff, values)
 
 class RunoffRoutingModel(nn.Module):
     def __init__(self, 
@@ -54,14 +56,11 @@ class RunoffRoutingModel(nn.Module):
         return self.routing_model(runoff_m3s, g)
 
     def format_runoff_input(self, inp):
-        B,C,T = inp.shape
-        return TimeSeriesThDF(inp.values.view(B*C, T, 1).contiguous())
+        ensure_bst_dims(inp)
+        return inp
 
     def format_runoff_output(self, out, inp):
-        B,C,T = inp.shape
-        return TimeSeriesThDF(out.values.view(inp.shape),
-                              columns=inp.columns,
-                              index=inp.index)
+        return out
 
 class RunoffRoutingModule(nn.Module):
     def __init__(self, model, 
@@ -97,8 +96,9 @@ class RunoffRoutingModule(nn.Module):
         """
         inp, lbl = self.tr_data.sample()
         out = self.model(inp, g, cat_areas)
-        out = out[lbl.columns].values[...,self.tr_data.init_len:]
-        nse = nse_fn(out, lbl.values, var_y=torch.ones(1, device=out.device)).mean()
+        selected = out.sel(spatial=lbl.coords[SPATIAL_DIM])
+        pred = selected.values[..., self.tr_data.init_len:]
+        nse = nse_fn(pred, lbl.values, var_y=torch.ones(1, device=pred.device)).mean()
         self.opt.zero_grad()
         loss = 1 - nse
         loss.backward()
@@ -115,11 +115,11 @@ class RunoffRoutingModule(nn.Module):
         inp = self.te_data.x
         lbl = self.te_data.y
         with torch.no_grad():
-            out = self.model(inp, g, cat_areas)[lbl.columns]
-            
-            nse = nse_fn(out.values[...,self.tr_data.init_len:],
-                         lbl.values[...,self.tr_data.init_len:], 
-                         ).mean()
+            out = self.model(inp, g, cat_areas).sel(spatial=lbl.coords[SPATIAL_DIM])
+            nse = nse_fn(
+                out.values[..., self.tr_data.init_len:],
+                lbl.values[..., self.tr_data.init_len:],
+            ).mean()
         if self.scheduler is not None: self.scheduler.step()
         print(nse.item())
         return nse.item()

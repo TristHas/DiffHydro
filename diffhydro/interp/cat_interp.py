@@ -4,7 +4,15 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-from ..structs import TimeSeriesThDF, BufferList
+from ..structs import DataTensor, BufferList
+from ..structs.time_series import (
+    ensure_bst_dims,
+    coords_lookup,
+    datatensor_from_components,
+    to_coord_sequence,
+    SPATIAL_DIM,
+    TIME_DIM,
+)
 
 def index_precompute(cin, cout,            # (N,) int64
                      map_river, map_pixel, # (R,) int64  (unordered OK)
@@ -86,7 +94,8 @@ class CatchmentInterpolator(nn.Module):
             So that when we interpolate the kernel, we interpolate it only for the needed inputs.
         """
         super().__init__()
-        input_pixel_idxs = pixel_df._columns
+        ensure_bst_dims(pixel_df)
+        input_pixel_idxs = coords_lookup(pixel_df, SPATIAL_DIM)
         output_cat_idxs = g.nodes_idx
         
         weight_subset = weight_df.loc[output_cat_idxs.index] # First only select the relevant rows
@@ -108,14 +117,18 @@ class CatchmentInterpolator(nn.Module):
             runoff is expected to be arranged according to the nodes_idx of g?
             what is the difference between map_inp and nodes_idx?
         """
+        ensure_bst_dims(runoff)
         weighted_x = runoff.values[:, self.src_idxs] * self.weights[None, :, None]  # broadcasts over the time dimension
         out_size = runoff.shape[0], self.n_cats, runoff.shape[-1]
         out = torch.zeros(out_size, 
                           dtype=runoff.dtype, device=runoff.device)
         out.index_add_(1, self.dest_idxs, weighted_x)
-        return TimeSeriesThDF(out, 
-                              columns=self.map_out.index, 
-                              index=runoff._index)
+        return datatensor_from_components(
+            out,
+            batch_coords=runoff.coords["batch"],
+            spatial_coords=to_coord_sequence(self.map_out),
+            time_coords=runoff.coords[TIME_DIM],
+        )
     
     def interpolate_kernel(self, irfs_agg, coords):
         """
@@ -130,7 +143,7 @@ class CatchmentInterpolator(nn.Module):
         return irfs_agg_pixel, coords_pixel, kernel_size
 
     def forward(self, inp):
-        if isinstance(inp, TimeSeriesThDF):
+        if isinstance(inp, DataTensor):
             return self.interpolate_runoff(inp)
         elif isinstance(inp, SparseKernel):
             return self.interpolate_kernel(inp.values, inp.coords)
@@ -142,15 +155,16 @@ class StagedCatchmentInterpolator(nn.Module):
         """
         """
         super().__init__()
-        input_pixel_idxs = pixel_df._columns
+        ensure_bst_dims(pixel_df)
+        input_pixel_idxs = coords_lookup(pixel_df, SPATIAL_DIM)
         output_cat_idxs = gs.nodes_idx
         
         weight_df = weight_df.loc[output_cat_idxs.index] # First only select the relevant rows
         pixel_columns, pixel_idxs, cis = [], [], []
         for g in tqdm(gs):
             weight_subset = weight_df.loc[g.nodes]
-            pixel_col = input_pixel_idxs[weight_subset["pixel_idx"].unique()] #weight_subset["pixel_idx"].unique() #
-            pixel_subset_df = pixel_df[pixel_col.index]
+            pixel_col = input_pixel_idxs[weight_subset["pixel_idx"].unique()]
+            pixel_subset_df = pixel_df.sel(spatial=pixel_col.index)
             
             pixel_idxs.append(torch.from_numpy(pixel_col.values))
             cis.append(CatchmentInterpolator(g, pixel_subset_df, weight_subset))
@@ -171,9 +185,15 @@ class StagedCatchmentInterpolator(nn.Module):
         return self.cis[idx]
 
     def read_pixels(self, runoff, idx):
-        return TimeSeriesThDF(runoff.values[:,self.pix_idxs[idx]],
-                              columns=self.cis[idx].map_inp.index, 
-                              index=runoff._index)
+        ensure_bst_dims(runoff)
+        spatial_coords = tuple(self.cis[idx].map_inp.index)
+        values = runoff.values[:, self.pix_idxs[idx]]
+        return datatensor_from_components(
+            values,
+            batch_coords=runoff.coords["batch"],
+            spatial_coords=spatial_coords,
+            time_coords=runoff.coords[TIME_DIM],
+        )
 
     def interpolate_runoff(self, runoff, idx):
         local_runoff = self.read_pixels(runoff, idx)
@@ -181,9 +201,12 @@ class StagedCatchmentInterpolator(nn.Module):
 
     def interpolate_all_runoff(self, runoff):
         values = torch.cat([x.values for x in self.yield_all_runoffs(runoff)], dim=1)
-        return TimeSeriesThDF(values, 
-                              columns=self.map_out.index, 
-                              index=runoff._index)
+        return datatensor_from_components(
+            values,
+            batch_coords=runoff.coords["batch"],
+            spatial_coords=to_coord_sequence(self.map_out),
+            time_coords=runoff.coords[TIME_DIM],
+        )
         
     def yield_all_runoffs(self, runoff, display_progress=False):
         pbar = tqdm if display_progress else lambda y: y

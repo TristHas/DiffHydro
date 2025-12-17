@@ -1,8 +1,13 @@
+from tqdm.auto import tqdm 
+
+import numpy as np
+import pandas as pd
+
 import torch
 import torch.nn as nn
 
 from .utils import MLP
-from .. import LTIStagedRouter, LTIRouter, RivTreeCluster, RivTree
+from .. import LTIStagedRouter, LTIRouter, RivTreeCluster, RivTree, nse_fn
 
 class LearnedRouter(nn.Module):
     """
@@ -69,3 +74,125 @@ class LearnedRouter(nn.Module):
                                              cluster_idx=cluster_idx, 
                                              params=params[cluster_idx], 
                                              transfer_bucket=transfer_bucket)
+
+class LearningModule(nn.Module):
+    def __init__(self, model, tr_data, te_data, tr_g, te_g):
+        """
+        """
+        super().__init__()
+        self.model = model
+        self.tr_data = tr_data
+        self.te_data = te_data
+        self.tr_g = tr_g
+        self.te_g = te_g
+        self.opt = self.init_opt()
+        
+    def init_opt(self, lr=.001):
+        """
+        """
+        return torch.optim.Adam(self.model.parameters(), lr=lr)
+
+    def train_one_epoch(self, n_iter=50):
+        """
+        """
+        pbar = tqdm(range(n_iter), desc="Training")
+        nses = []
+        for i in pbar:
+            nse = self.train_one_iter()
+            nses.append(nse)
+            pbar.set_postfix({"Tr NSE:": nse})
+        test_nse = self.test_one_epoch()
+        return test_nse, np.mean(nses)
+            
+    def train_one_iter(self):
+        """
+        """
+        inp, lbl = self.tr_data.sample()
+        out = self.model(inp, self.tr_g)
+        out = out.values[...,self.tr_data.init_len:]
+        
+        nse = nse_fn(out, lbl.values).mean()
+        
+        self.opt.zero_grad()
+        loss = 1-nse
+        loss.backward()
+        self.opt.step()
+        return nse.item()
+
+    def test_one_epoch(self):
+        """
+        """
+        inp = self.te_data.x
+        lbl = self.te_data.y
+        with torch.no_grad():
+            out = self.model(inp, self.te_g)
+            nse = nse_fn(out.values[...,self.tr_data.init_len:],
+                         lbl.values[...,self.tr_data.init_len:]).mean()
+        return nse.item()
+
+    def learn(self, n_iter=50, n_epoch=20):
+        """
+        """
+        results = [self.train_one_epoch(n_iter) for _ in range(n_epoch)]
+        te_nse, tr_nse = zip(*results)
+        return pd.Series(te_nse), pd.Series(tr_nse)
+
+    def train_one_iter_one_cluster(self, cluster_idx):
+        """
+        """
+        inp, lbl = self.tr_data.sample()
+        with torch.no_grad():
+            q_init = self.model.init_upstream_discharges(inp, self.tr_g, cluster_idx)
+
+        idxs = self.tr_g[cluster_idx].nodes
+        inp = inp[idxs]
+        lbl = lbl[idxs]
+        out = self.model.route_one_cluster(inp, self.tr_g, cluster_idx, q_init)
+        out = out.values[...,self.tr_data.init_len:]
+        
+        nse = nse_fn(out, lbl.values).mean()
+        
+        self.opt.zero_grad()
+        loss = 1-nse
+        loss.backward()
+        self.opt.step()
+        
+        return nse.item()
+
+    def train_one_epoch_one_cluster(self, cluster_idx, n_iter=50):
+        """
+        """
+        pbar = tqdm(range(n_iter), desc="Training")
+        nses = []
+        for i in pbar:
+            nse = self.train_one_iter_one_cluster(cluster_idx)
+            nses.append(nse)
+            pbar.set_postfix({f"Tr NSE cluster {cluster_idx}:": nse})
+        test_nse = self.test_one_epoch_one_cluster(cluster_idx)
+        return test_nse, np.mean(nses)
+
+    def test_one_epoch_one_cluster(self, cluster_idx):
+        """
+        """
+        inp = self.te_data.x
+        lbl = self.te_data.y
+        with torch.no_grad():
+            q_init = self.model.init_upstream_discharges(inp, self.te_g, cluster_idx)
+            idxs   = self.te_g[cluster_idx].nodes
+            inp    = inp[idxs]
+            lbl    = lbl[idxs]
+            out    = self.model.route_one_cluster(inp, self.te_g, cluster_idx, q_init)
+        
+            nse = nse_fn(out.values[...,self.tr_data.init_len:],
+                         lbl.values[...,self.tr_data.init_len:]).mean()
+        return nse.item()
+        
+    def learn_staged_sequentially(self, n_iter=50, n_epoch=20):
+        """
+        """
+        results = []
+        for cluster_idx,_ in enumerate(self.tr_g):
+            results = [self.train_one_epoch_one_cluster(cluster_idx, n_iter) for _ in range(n_epoch)]
+            te_nse, tr_nse = map(pd.Series, zip(*results))
+        results.append([te_nse, tr_nse])
+        return results

@@ -78,8 +78,8 @@ class CalibrationRouter(nn.Module):
                             params=self.read_params()
         )
 
-    def process_one_cluster(self, x, cluster_idx, transfer_bucket=None, cat=None):
-        assert self.staged, "Non-staged pipeline can not process_one_cluster"
+    def route_one_cluster(self, x, cluster_idx, transfer_bucket=None, cat=None):
+        assert self.staged, "Non-staged pipeline can not route_one_cluster"
         params = self.read_params()
         output = self.router.route_one_cluster(x,
                                                gs=self.g, 
@@ -159,7 +159,7 @@ class CalibrationModule(nn.Module):
         idxs = self.model.g[cluster_idx].nodes
         inp = inp[idxs]
         lbl = lbl[idxs]
-        out = self.model.process_one_cluster(inp, cluster_idx, q_init)
+        out = self.model.route_one_cluster(inp, cluster_idx, q_init)
         out = out.values[...,self.tr_data.init_len:]
         
         nse = nse_fn(out, lbl.values).mean()
@@ -193,7 +193,7 @@ class CalibrationModule(nn.Module):
             idxs   = self.model.g[cluster_idx].nodes
             inp    = inp[idxs]
             lbl    = lbl[idxs]
-            out    = self.model.process_one_cluster(inp, cluster_idx, q_init)
+            out    = self.model.route_one_cluster(inp, cluster_idx, q_init)
         
             nse = nse_fn(out.values[...,self.tr_data.init_len:],
                          lbl.values[...,self.tr_data.init_len:]).mean()

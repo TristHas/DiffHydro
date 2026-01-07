@@ -12,13 +12,14 @@ class Runoff(nn.Module):
         super().__init__()
         self.core = LSTMModel(**kwargs)
 
-    def forward(self, inp_df: DataTensor) -> DataTensor:
-        ensure_bst_dims(inp_df)
-        batch, spatial, time = inp_df.shape
-        flattened = inp_df.values.reshape(batch * spatial, time, 1)
+    def forward(self, dyn_inp: DataTensor, stat_inp=None) -> DataTensor:
+        batch, spatial, time, var = dyn_inp.shape
+        flattened = dyn_inp.values.reshape(batch * spatial, time, var)
         y = self.core(flattened)
-        reshaped = y.view(batch, spatial, time, -1)
-        if reshaped.shape[-1] != 1:
-            raise ValueError("Runoff model is expected to output a single feature.")
+        reshaped = y.view(batch, spatial, time, 1)
         reshaped = reshaped.squeeze(-1)
-        return datatensor_like(inp_df, reshaped)
+
+        out_dims = dyn_inp.dims[:3]
+        return DataTensor(reshaped, dims=out_dims, 
+                          coords={d:dyn_inp.coords[d] \
+                                  for d in out_dims})

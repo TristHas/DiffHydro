@@ -18,12 +18,13 @@ class LearnedRouter(nn.Module):
             dt: float = 1.0,
             param_mins = [.005, .0],
             param_maxs = [.25, 1.2],
+            param_inits = [0., 0.],
             mlp = None,
             **routing_kwargs
         ) -> None:
         super().__init__()
         self._init_router(max_delay, dt, **routing_kwargs)
-        self._init_buffers(param_mins, param_maxs)
+        self._init_buffers(param_mins, param_maxs, param_inits)
         self.mlp = mlp or MLP(in_dim=3, out_dim=2)
 
     def _init_router(self, max_delay, dt, **routing_kwargs):
@@ -37,13 +38,14 @@ class LearnedRouter(nn.Module):
                     )
 
     
-    def _init_buffers(self, param_mins, param_maxs):
+    def _init_buffers(self, param_mins, param_maxs, param_inits):
+        self.register_buffer("param_init", torch.tensor(param_inits)[None])
         self.register_buffer("offset", torch.tensor(param_mins)[None])
         self.register_buffer("range", (torch.tensor(param_maxs) -\
                                        torch.tensor(param_mins))[None])
 
     def _read_params(self, p):
-        return torch.sigmoid(self.mlp(p)) * self.range + self.offset
+        return torch.sigmoid(self.mlp(p) + self.param_init) * self.range + self.offset
         
     def read_params(self, g):
         if isinstance(g, RivTree):

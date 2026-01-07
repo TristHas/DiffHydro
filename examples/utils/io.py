@@ -1,7 +1,15 @@
 import numpy as np
 import pandas as pd
 
-from diffhydro import RivTree, RivTreeCluster, TimeSeriesThDF
+from diffhydro import (
+    RivTree,
+    RivTreeCluster,
+    DataTensor,
+    CatchmentInterpolator,
+    BATCH_DIM,
+    SPATIAL_DIM,
+    TIME_DIM,
+)
 from diffroute.graph_utils import define_schedule
 from diffroute.io import _read_rapid_graph, read_rapid_graph
 
@@ -24,12 +32,21 @@ def load_single_vpu(root, vpu,
     pixel_runoff = pd.read_feather(runoff_path)
     pixel_runoff = pixel_runoff[pix_idxs].loc[:"2019"]  / (3600. * 24)
     
-    pixel_runoff = TimeSeriesThDF.from_pandas(pixel_runoff).to(device)
+    pixel_runoff = (
+        DataTensor.from_pandas(pixel_runoff, dims=(SPATIAL_DIM, TIME_DIM))
+        .expand_dims(BATCH_DIM)
+        .to(device)
+    )
     cat = CatchmentInterpolator(g, pixel_runoff, cat_interp_df).to(device) 
     cat_runoff = cat(pixel_runoff)
     
     discharge = pd.read_feather(root / "geoglows" / "retro_feather" / f"{vpu}.feather")
-    discharge = TimeSeriesThDF.from_pandas(discharge).to(device)[cat_runoff.columns]
+    discharge = (
+        DataTensor.from_pandas(discharge, dims=(SPATIAL_DIM, TIME_DIM))
+        .expand_dims(BATCH_DIM)
+        .to(device)
+        .sel(spatial=cat_runoff.coords[SPATIAL_DIM])
+    )
     return cat_runoff, discharge, g
     
 def load_rapid_graph_with_attributes(root, vpu, plength_thr=None, node_thr=None):
@@ -73,7 +90,10 @@ def load_vpu(root, vpu,
         interp_df = pd.read_feather(root / "interp_weight.feather").set_index("river_id")
     if runoff is None:
         runoff = pd.read_feather(root / "daily_sparse_runoff.feather").loc[:"2019"] / (3600. * 24)
-        runoff = TimeSeriesThDF.from_pandas(runoff)
+        runoff = (
+            DataTensor.from_pandas(runoff, dims=(SPATIAL_DIM, TIME_DIM))
+            .expand_dims(BATCH_DIM)
+        )
 
     g = load_rapid_graph_with_attributes(root, vpu, 
                                          plength_thr=plength_thr, 
@@ -81,10 +101,18 @@ def load_vpu(root, vpu,
 
     interp_df = interp_df.loc[g.nodes]
     pix_idxs  = interp_df["pixel_idx"].unique()
-    runoff = runoff[pix_idxs].to(device)
+    runoff = runoff.sel(spatial=pix_idxs).to(device)
     ci = CatchmentInterpolator(g, runoff, interp_df).to(device)
     runoff = ci.interpolate_runoff(runoff)
     
-    q = TimeSeriesThDF.from_pandas(pd.read_feather(root / "retro_feather" /f"{vpu}.feather")).to(device)[g.nodes]
+    q = (
+        DataTensor.from_pandas(
+            pd.read_feather(root / "retro_feather" / f"{vpu}.feather"),
+            dims=(SPATIAL_DIM, TIME_DIM),
+        )
+        .expand_dims(BATCH_DIM)
+        .to(device)
+        .sel(spatial=g.nodes)
+    )
     
     return g, q, runoff

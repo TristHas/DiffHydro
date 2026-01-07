@@ -35,8 +35,8 @@ class SimpleTimeSeriesSampler(nn.Module):
         ensure_bst_dims(y)
         if x.coords[TIME_DIM] != y.coords[TIME_DIM]:
             raise ValueError("Index misalignment")
-        if x.coords[SPATIAL_DIM] != y.coords[SPATIAL_DIM]:
-            raise ValueError("Columns misalignment")
+        #if x.coords[SPATIAL_DIM] != y.coords[SPATIAL_DIM]:
+        #    raise ValueError("Columns misalignment")
         self.x = x
         self.y = y
         self.init_len = init_len
@@ -46,6 +46,7 @@ class SimpleTimeSeriesSampler(nn.Module):
     def to(self, *args, **kwargs):
         self.x = self.x.to(*args, **kwargs)
         self.y = self.y.to(*args, **kwargs)
+        return self
         
     def __getitem__(self, idx):
         start = idx

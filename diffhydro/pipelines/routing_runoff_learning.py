@@ -1,11 +1,12 @@
 from tqdm.auto import tqdm
 
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, Sampler, DataLoader
 from xtensor import DataTensor
 
-from .utils import SimpleTimeSeriesDataset, collate_fn
+from .utils import collate_fn
 from .. import LTIRouter, Runoff
 
 PARAMS_BOUNDS = {
@@ -120,9 +121,9 @@ class RunoffRoutingModel(nn.Module):
 
 
 class StridedStartSampler(Sampler[int]):
-    def __init__(self, dataset: Dataset, stride: int):
+    def __init__(self, dataset: Dataset):
         self.dataset_len = len(dataset)          # number of valid start indices
-        self.stride = int(stride)
+        self.stride = int(dataset.pred_len)
 
     def __iter__(self):
         yield from range(0, self.dataset_len, self.stride)
@@ -131,14 +132,8 @@ class StridedStartSampler(Sampler[int]):
         return (self.dataset_len + self.stride - 1) // self.stride
         
 class RunoffRoutingModule(nn.Module):
-    def __init__(self, model, g,
-                 inp_tr, lbl_tr, 
-                 inp_te, lbl_te, 
-                 cat_area, 
-                 channel_dist=None,
-                 basin_area=None,
-                 init_window=100, 
-                 pred_len=200, 
+    def __init__(self, model, 
+                 tr_ds, val_ds,
                  batch_size=256,
                  clip_grad_norm=1,
                  routing_lr=10**-4, 
@@ -149,36 +144,20 @@ class RunoffRoutingModule(nn.Module):
                  scheduler_gamma=.1,
                  **opt_kwargs):
         super().__init__()
-        self.g = g
-        self.init_dataloaders(inp_tr, lbl_tr, inp_te, lbl_te, 
-                              init_window, pred_len, batch_size)
+        self.init_dataloaders(tr_ds, val_ds, batch_size)
+        
         self.model = model
         self.init_optimizer( routing_lr=routing_lr, routing_wd=routing_wd,
                              runoff_lr=runoff_lr, runoff_wd=runoff_wd,
                              scheduler_step_size=scheduler_step_size,
                              scheduler_gamma=scheduler_gamma)
-
-        self.init_window = init_window
         self.clip_grad_norm = clip_grad_norm
-        
-        self.cat_area = cat_area
-        self.channel_dist = channel_dist
-        self.basin_area = basin_area
-
-        dims = lbl_tr.dims[:-1]
-        coords = {d:lbl_tr.coords[d] for d in dims}
-        self.lbl_var = DataTensor(lbl_tr.values.var(-1), coords=coords, dims=dims).expand_dims("time", -1)
-        self.lbl_var_te = DataTensor(lbl_te.values.var(-1), coords=coords, dims=dims).expand_dims("time", -1)
-        
-    def init_dataloaders(self, inp_tr, lbl_tr, inp_te, lbl_te, 
-                         init_window, pred_len, batch_size):
-        self.tr_ds = SimpleTimeSeriesDataset(inp_tr, lbl_tr, init_window, pred_len)
+                
+    def init_dataloaders(self, tr_ds, val_ds, batch_size):
+        self.tr_ds = tr_ds
+        self.val_ds = val_ds
         self.tr_dl = DataLoader(self.tr_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-        #self.val_ds = SimpleTimeSeriesDataset(inp_te, lbl_te, init_window, pred_len)
-        #self.val_dl = DataLoader(self.val_ds, batch_size=1, shuffle=False, collate_fn=collate_fn)
-
-        self.val_ds = SimpleTimeSeriesDataset(inp_te, lbl_te, init_window, pred_len)
-        sampler = StridedStartSampler(self.val_ds, pred_len)
+        sampler = StridedStartSampler(self.val_ds)
         self.val_dl = DataLoader(self.val_ds, 
                                  batch_size=batch_size,
                                  drop_last=False,
@@ -205,7 +184,6 @@ class RunoffRoutingModule(nn.Module):
         """
         tr_losses, val_losses = [],[]
         self.model = self.model.to(device)
-        self.lbl_var = self.lbl_var.to(device)
         
         for epoch in range(n_epoch):
             tr_loss = self.train_epoch(device=device)
@@ -218,17 +196,20 @@ class RunoffRoutingModule(nn.Module):
 
     def train_epoch(self, device):
         losses = []
+        (g, lbl_var, cat_area, 
+         channel_dist, init_window) = self.tr_ds.read_statics(device)
+        
         for x,y in tqdm(self.tr_dl):
             x = x.to(device)
             y = y.to(device)
     
-            o = self.model(x, self.g, self.cat_area, self.channel_dist)
+            o = self.model(x, g, cat_area, channel_dist)
             o = o.sel(spatial=y.coords["spatial"])
             
-            o = o.isel(time=slice(self.init_window,None))
-            y = y.isel(time=slice(self.init_window,None))
+            o = o.isel(time=slice(init_window, None))
+            y = y.isel(time=slice(init_window, None))
 
-            loss = self.loss_fn(o, y, self.lbl_var)
+            loss = self.loss_fn(o, y, lbl_var)
             
             self.opt.zero_grad()
             loss.backward()
@@ -260,43 +241,51 @@ class RunoffRoutingModule(nn.Module):
         return 1-((yte-ote)**2).mean() / yte.var()
     
     def extract_test(self, device):
+        (g, lbl_var, cat_area, 
+         channel_dist, init_window) = self.val_ds.read_statics(device)
+
         with torch.no_grad(): 
-            O  = self.model(self.val_dl.dataset.x.to(device), self.g,
-                       self.cat_area, self.channel_dist).values[:,2] 
-        YY = self.val_dl.dataset.y.squeeze().to_pandas()
+            O  = self.model(self.val_ds.x.to(device), g,
+                            cat_area, channel_dist).values[:,2] 
+        YY = self.val_ds.y.squeeze().to_pandas()
         OO = pd.Series(O.squeeze().detach().cpu(), index=YY.index)
-        return YY.iloc[self.init_window:], OO.iloc[self.init_window:]
+        return YY.iloc[init_window:], OO.iloc[init_window:]
 
     def new_valid_epoch(self, device):
+        (g, lbl_var, cat_area, 
+         channel_dist, init_window) = self.val_ds.read_statics(device)
+
         losses = []
         with torch.no_grad(): 
             for x,y in tqdm(self.val_dl):
                 x = x.to(device)
                 y = y.to(device)
                 
-                o = self.model(x, self.g, self.cat_area, self.channel_dist)
+                o = self.model(x, g, cat_area, channel_dist)
                 o = o.sel(spatial=y.coords["spatial"])
                 
-                o = o.isel(time=slice(self.init_window,None))
-                y = y.isel(time=slice(self.init_window,None))
+                o = o.isel(time=slice(init_window,None))
+                y = y.isel(time=slice(init_window,None))
     
-                loss = self.loss_fn(o, y, self.lbl_var_te)
+                loss = self.loss_fn(o, y, lbl_var)
                 losses.append(1-loss.item())
                 
         return losses
 
     def new_extract_test(self, device):
+        (g, lbl_var, cat_area, 
+         channel_dist, init_window) = self.val_ds.read_statics(device)
         data = []
         with torch.no_grad(): 
             for x,y in tqdm(self.val_dl):
                 x = x.to(device)
                 y = y.to(device)
                 
-                o = self.model(x, self.g, self.cat_area, self.channel_dist)
+                o = self.model(x, g, cat_area, channel_dist)
                 o = o.sel(spatial=y.coords["spatial"])
                 
-                o = o.isel(time=slice(self.init_window,None))
-                y = y.isel(time=slice(self.init_window,None))
+                o = o.isel(time=slice(init_window, None))
+                y = y.isel(time=slice(init_window, None))
     
                 data.append((o,y))
         o,y = zip(*data)

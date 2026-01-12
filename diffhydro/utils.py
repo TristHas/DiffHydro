@@ -33,7 +33,7 @@ class SimpleTimeSeriesSampler(nn.Module):
         super().__init__()
         ensure_bst_dims(x)
         ensure_bst_dims(y)
-        if x.coords[TIME_DIM] != y.coords[TIME_DIM]:
+        if (x["time"] != y["time"]).any():
             raise ValueError("Index misalignment")
         #if x.coords[SPATIAL_DIM] != y.coords[SPATIAL_DIM]:
         #    raise ValueError("Columns misalignment")

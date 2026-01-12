@@ -25,7 +25,7 @@ class LearnedRouter(nn.Module):
         super().__init__()
         self._init_router(max_delay, dt, **routing_kwargs)
         self._init_buffers(param_mins, param_maxs, param_inits)
-        self.mlp = mlp or MLP(in_dim=3, out_dim=2)
+        self.mlp = mlp or MLP(in_dim=2, out_dim=2)
 
     def _init_router(self, max_delay, dt, **routing_kwargs):
         self.staged_router = LTIStagedRouter(
@@ -147,8 +147,8 @@ class LearningModule(nn.Module):
             q_init = self.model.init_upstream_discharges(inp, self.tr_g, cluster_idx)
 
         idxs = self.tr_g[cluster_idx].nodes
-        inp = inp[idxs]
-        lbl = lbl[idxs]
+        inp = inp.sel(spatial=idxs)
+        lbl = lbl.sel(spatial=idxs)
         out = self.model.route_one_cluster(inp, self.tr_g, cluster_idx, q_init)
         out = out.values[...,self.tr_data.init_len:]
         
@@ -170,7 +170,7 @@ class LearningModule(nn.Module):
             nse = self.train_one_iter_one_cluster(cluster_idx)
             nses.append(nse)
             pbar.set_postfix({f"Tr NSE cluster {cluster_idx}:": nse})
-        test_nse = self.test_one_epoch_one_cluster(cluster_idx)
+        test_nse = self.test_one_epoch_one_cluster(min(len(self.te_g) - 1, cluster_idx))
         return test_nse, np.mean(nses)
 
     def test_one_epoch_one_cluster(self, cluster_idx):
@@ -181,8 +181,8 @@ class LearningModule(nn.Module):
         with torch.no_grad():
             q_init = self.model.init_upstream_discharges(inp, self.te_g, cluster_idx)
             idxs   = self.te_g[cluster_idx].nodes
-            inp    = inp[idxs]
-            lbl    = lbl[idxs]
+            inp    = inp.sel(spatial=idxs)
+            lbl    = lbl.sel(spatial=idxs)
             out    = self.model.route_one_cluster(inp, self.te_g, cluster_idx, q_init)
         
             nse = nse_fn(out.values[...,self.tr_data.init_len:],

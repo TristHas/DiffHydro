@@ -119,7 +119,6 @@ class RunoffRoutingModel(nn.Module):
         runoff_m3s = mm_to_m3s(runoff_mm, cat_area, self.res_temp_h)
         return self.routing_model(runoff_m3s, g, additional_params)
 
-
 class StridedStartSampler(Sampler[int]):
     def __init__(self, dataset: Dataset):
         self.dataset_len = len(dataset)          # number of valid start indices
@@ -189,7 +188,7 @@ class RunoffRoutingModule(nn.Module):
             tr_loss = self.train_epoch(device=device)
             tr_losses.append(tr_loss)
     
-            val_loss = self.new_valid_epoch(device=device)
+            val_loss = self.valid_epoch(device=device)
             val_losses.append(val_loss)
             
         return tr_losses, val_losses
@@ -229,7 +228,7 @@ class RunoffRoutingModule(nn.Module):
         
         valid_mask = ~y.isnan()            
         safe_o = torch.where(valid_mask, o, 0)
-        safe_y   = torch.where(valid_mask, y,   0)
+        safe_y   = torch.where(valid_mask, y, 0)
         
         mse = ((safe_o - safe_y) ** 2).mean((0, -1))  
         loss = (mse / var).mean()
@@ -237,21 +236,6 @@ class RunoffRoutingModule(nn.Module):
         return loss
         
     def valid_epoch(self, device):
-        yte, ote = self.extract_test(device)
-        return 1-((yte-ote)**2).mean() / yte.var()
-    
-    def extract_test(self, device):
-        (g, lbl_var, cat_area, 
-         channel_dist, init_window) = self.val_ds.read_statics(device)
-
-        with torch.no_grad(): 
-            O  = self.model(self.val_ds.x.to(device), g,
-                            cat_area, channel_dist).values[:,2] 
-        YY = self.val_ds.y.squeeze().to_pandas()
-        OO = pd.Series(O.squeeze().detach().cpu(), index=YY.index)
-        return YY.iloc[init_window:], OO.iloc[init_window:]
-
-    def new_valid_epoch(self, device):
         (g, lbl_var, cat_area, 
          channel_dist, init_window) = self.val_ds.read_statics(device)
 
@@ -272,7 +256,7 @@ class RunoffRoutingModule(nn.Module):
                 
         return losses
 
-    def new_extract_test(self, device):
+    def extract_test(self, device):
         (g, lbl_var, cat_area, 
          channel_dist, init_window) = self.val_ds.read_statics(device)
         data = []

@@ -2,7 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from xtensor import DataTensor
+import xtensor as xt# DataTensor
+from .. import RivTree
 
 class MLP(nn.Module):
     def __init__(self, in_dim, out_dim, n_layers=3, hidden_dim=256):
@@ -33,10 +34,10 @@ def cat_xtensor(xs):
     x_coords["time"] = np.arange(len(x_coords["time"]))
     x_coords["batch"] = np.arange(len(xs))
     values = torch.cat([x.values for x in xs])
-    return DataTensor(values, coords=x_coords, dims=x_dims)
+    return xt.DataTensor(values, coords=x_coords, dims=x_dims)
     
 class SimpleTimeSeriesDataset(Dataset):
-    def __init__(self, x: DataTensor, y: DataTensor, init_len, pred_len):
+    def __init__(self, x: xt.DataTensor, y: xt.DataTensor, init_len, pred_len):
         super().__init__()
         if x.coords["time"] != y.coords["time"]:
             raise ValueError("Index misalignment")
@@ -62,7 +63,7 @@ class JointRoutingRunoffDataset(Dataset):
     def __init__(self, 
                  x_dyn: xt.DataTensor, 
                  y: xt.DataTensor, 
-                 g: dh.RivTree,
+                 g: RivTree,
                  init_len, 
                  pred_len,
                  cat_area,
@@ -71,7 +72,7 @@ class JointRoutingRunoffDataset(Dataset):
                  x_stat = None, 
                  ):
         super().__init__()
-        if x_dyn.coords["time"] != y.coords["time"]:
+        if (x_dyn.coords["time"] != y.coords["time"]).any():
             raise ValueError("Index misalignment")
         self.g = g
         self.x_dyn  = x_dyn
@@ -86,9 +87,20 @@ class JointRoutingRunoffDataset(Dataset):
         self.basin_area = basin_area
         self.channel_dist = channel_dist
         
+        
+        #var = torch.nan_to_num(y.values.var(-1), nan=1.0)
+        #self.y_var = xt.DataTensor(var, coords=coords, dims=dims)
+        
+        #corrected victor and gpt
         dims = y.dims[:-1]
         coords = {d:y.coords[d] for d in dims}
-        self.y_var = DataTensor(y.values.var(-1), coords=coords, dims=dims)
+        mask = ~torch.isnan(y.values)
+        y0 = torch.where(mask, y.values, 0)
+        count = mask.sum(dim=-1,keepdim=True)
+        mean = y0.sum(dim=-1,keepdim=True) / count.clamp_min(1)
+        var = ((y0 - mean)**2 * mask).sum(dim=-1,keepdim=True) / count.clamp_min(1)
+        var = torch.nan_to_num(var, nan=1.0)
+        self.y_var =xt.DataTensor(var.squeeze(-1), coords=coords, dims=dims)
         
     def __getitem__(self, idx):
         y = self.y.isel(time=slice(idx, idx + self.total_len)) #slice(middle, end)

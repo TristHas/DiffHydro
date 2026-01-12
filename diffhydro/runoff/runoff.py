@@ -1,7 +1,6 @@
 import torch.nn as nn
 
-from ..structs import DataTensor
-from ..structs.time_series import ensure_bst_dims, datatensor_like
+from ..structs import DataTensor, ensure_bst_dims
 from .lstm import LSTMModel
 
 class Runoff(nn.Module):

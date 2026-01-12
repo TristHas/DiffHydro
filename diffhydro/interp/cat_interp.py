@@ -5,12 +5,7 @@ import torch
 import torch.nn as nn
 import xtensor as xt
 
-from ..structs import BufferList
-from ..structs.time_series import (
-    ensure_bst_dims,
-    SPATIAL_DIM,
-    TIME_DIM,
-)
+from ..structs import BufferList, ensure_bst_dims
 
 def index_precompute(cin, cout,            # (N,) int64
                      map_river, map_pixel, # (R,) int64  (unordered OK)
@@ -119,16 +114,19 @@ class CatchmentInterpolator(nn.Module):
             what is the difference between map_inp and nodes_idx?
         """
         ensure_bst_dims(runoff)
+        native_dtype = runoff.dtype
+        runoff = runoff.to(dtype=self.weights.dtype)
+        
         weighted_x = runoff.values[:, self.src_idxs] * self.weights[None, :, None]  # broadcasts over the time dimension
         out_size = runoff.shape[0], self.n_cats, runoff.shape[-1]
         out = torch.zeros(out_size, 
                           dtype=runoff.dtype, device=runoff.device)
         out.index_add_(1, self.dest_idxs, weighted_x)
         return xt.DataTensor(
-            out,
+            out.to(dtype=native_dtype),
             coords={"batch":runoff["batch"],
                     "spatial":self.map_out.index,
-                    "time":runoff[TIME_DIM]},
+                    "time":runoff["time"]},
             dims = ["batch", "spatial", "time"]
         )
     
@@ -195,7 +193,7 @@ class StagedCatchmentInterpolator(nn.Module):
             values,
             coords={"batch":runoff["batch"],
                     "spatial":self.cis[idx].map_inp.index,
-                    "time":runoff[TIME_DIM]},
+                    "time":runoff["time"]},
             dims = ["batch", "spatial", "time"]
         )
 
@@ -209,7 +207,7 @@ class StagedCatchmentInterpolator(nn.Module):
             values,
             coords={"batch":runoff["batch"],
                     "spatial":self.map_out.index,
-                    "time":runoff[TIME_DIM]},
+                    "time":runoff["time"]},
             dims = ["batch", "spatial", "time"]
         )
 

@@ -2,9 +2,7 @@ import itertools
 import torch.nn as nn
 import xtensor as xt
 
-from ..structs.time_series import (
-    ensure_bst_dims,
-)
+from ..structs import ensure_bst_dims
 
 from diffroute import (
     RivTree,

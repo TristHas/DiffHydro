@@ -103,10 +103,7 @@ def download_zenodo_file(url: str, dest_path: str):
 def process_single_vpu_data(root, device="cpu"):
     from diffhydro import (
         DataTensor,
-        CatchmentInterpolator,
-        BATCH_DIM,
-        SPATIAL_DIM,
-        TIME_DIM,
+        CatchmentInterpolator
     )
     from diffhydro.io import read_rapid_graph
 
@@ -117,9 +114,10 @@ def process_single_vpu_data(root, device="cpu"):
     # Load input pixel-wise runoff.
     pixel_runoff = pd.read_feather(runoff_path) # Convert values in m3 / s
     pixel_runoff = (
-        DataTensor.from_pandas(pixel_runoff, dims=(SPATIAL_DIM, TIME_DIM))
-        .expand_dims(BATCH_DIM)
+        DataTensor.from_pandas(pixel_runoff, dims=("time", "spatial"))
+        .expand_dims("batch")
         .to(device)
+        .transpose("batch", "spatial", "time")
     )
     # Interpolate the pixel-wise runoffs onto the graph catchments 
     interp_df = pd.read_feather(interp_weight_path)
@@ -127,12 +125,8 @@ def process_single_vpu_data(root, device="cpu"):
     cat = CatchmentInterpolator(g, pixel_runoff, interp_df).to(device)
     runoff = cat(pixel_runoff)
     # Dump as netcdf
-    batch_index = runoff.coords[BATCH_DIM][0]
-    spatial = pd.Index(runoff.coords[SPATIAL_DIM], name="river_id")
-    time = pd.Index(runoff.coords[TIME_DIM], name="time")
-    df = pd.DataFrame(runoff.values[0].T, index=time, columns=spatial)
+    df = runoff.squeeze().transpose("time", "spatial").to_pandas()
     xr.DataArray(df).to_netcdf(rapid_path / "runoff.nc")
-
     
 def download_single_vpu_data(root: Path):
     dest_path = root / "geoglows" / "input" / "305_daily_sparse_runoff.feather"

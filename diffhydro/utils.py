@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 from .structs import DataTensor
-from .structs.time_series import ensure_bst_dims, SPATIAL_DIM, TIME_DIM
+from .structs import ensure_bst_dims
 
 
 def nse_fn(o: torch.Tensor, lbl: torch.Tensor, 
@@ -35,8 +35,6 @@ class SimpleTimeSeriesSampler(nn.Module):
         ensure_bst_dims(y)
         if (x["time"] != y["time"]).any():
             raise ValueError("Index misalignment")
-        #if x.coords[SPATIAL_DIM] != y.coords[SPATIAL_DIM]:
-        #    raise ValueError("Columns misalignment")
         self.x = x
         self.y = y
         self.init_len = init_len

@@ -5,9 +5,6 @@ from .structs import (
     DataTensor,
     RivTree,
     RivTreeCluster,
-    BATCH_DIM,
-    SPATIAL_DIM,
-    TIME_DIM,
 )
 from .utils import nse_fn
 
@@ -20,8 +17,5 @@ __all__ = [
     "DataTensor",
     "RivTree",
     "RivTreeCluster",
-    "BATCH_DIM",
-    "SPATIAL_DIM",
-    "TIME_DIM",
     "nse_fn",
 ]

@@ -7,6 +7,7 @@ from .structs import (
     RivTreeCluster,
 )
 from .utils import nse_fn
+from . import io
 
 __all__ = [
     "CatchmentInterpolator",

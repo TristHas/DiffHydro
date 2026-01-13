@@ -1,5 +1,5 @@
 from .interp import CatchmentInterpolator, StagedCatchmentInterpolator
-from .routing import LTIRouter #, LTIStagedRouter
+from .routing import LTIRouter
 from .runoff import Runoff
 from .structs import (
     DataTensor,
@@ -13,7 +13,6 @@ __all__ = [
     "CatchmentInterpolator",
     "StagedCatchmentInterpolator",
     "LTIRouter",
-    #"LTIStagedRouter",
     "Runoff",
     "DataTensor",
     "RivTree",

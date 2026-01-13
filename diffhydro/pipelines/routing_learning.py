@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 from .utils import MLP
-from .. import LTIStagedRouter, LTIRouter, RivTreeCluster, RivTree, nse_fn
+from .. import LTIRouter, RivTreeCluster, RivTree, nse_fn
 
 class LearnedRouter(nn.Module):
     """

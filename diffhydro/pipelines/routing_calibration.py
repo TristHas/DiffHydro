@@ -4,7 +4,7 @@ import pandas as pd
 
 import torch
 import torch.nn as nn
-from .. import LTIStagedRouter, LTIRouter, RivTreeCluster, RivTree, nse_fn
+from .. import LTIRouter, RivTreeCluster, RivTree, nse_fn
 
 class CalibrationRouter(nn.Module):
     """
@@ -27,7 +27,7 @@ class CalibrationRouter(nn.Module):
     def _init_router(self, max_delay, dt, **routing_kwargs):
         if isinstance(self.g, RivTreeCluster):
             self.staged = True
-            self.router = LTIStagedRouter(
+            self.router = LTIRouter(
                               max_delay=max_delay,
                               dt=dt, **routing_kwargs
                         )

@@ -101,7 +101,10 @@ def download_zenodo_file(url: str, dest_path: str):
     return dest
 
 def process_single_vpu_data(root, device="cpu"):
-    from diffhydro import TimeSeriesThDF, CatchmentInterpolator
+    from diffhydro import (
+        DataTensor,
+        CatchmentInterpolator
+    )
     from diffhydro.io import read_rapid_graph
 
     runoff_path = root / 'geoglows' / 'input' / '305_daily_sparse_runoff.feather'
@@ -110,16 +113,20 @@ def process_single_vpu_data(root, device="cpu"):
     
     # Load input pixel-wise runoff.
     pixel_runoff = pd.read_feather(runoff_path) # Convert values in m3 / s
-    pixel_runoff = TimeSeriesThDF.from_pandas(pixel_runoff).to(device) # Convert pandas DataFrame to TimeSeriesThDF
+    pixel_runoff = (
+        DataTensor.from_pandas(pixel_runoff, dims=("time", "spatial"))
+        .expand_dims("batch")
+        .to(device)
+        .transpose("batch", "spatial", "time")
+    )
     # Interpolate the pixel-wise runoffs onto the graph catchments 
     interp_df = pd.read_feather(interp_weight_path)
     g = read_rapid_graph(rapid_path)
     cat = CatchmentInterpolator(g, pixel_runoff, interp_df).to(device)
     runoff = cat(pixel_runoff)
     # Dump as netcdf
-    runoff = xr.DataArray(runoff.to_pandas(), dims=["time", "river_id"])
-    runoff.to_netcdf(rapid_path / "runoff.nc")
-
+    df = runoff.squeeze().transpose("time", "spatial").to_pandas()
+    xr.DataArray(df).to_netcdf(rapid_path / "runoff.nc")
     
 def download_single_vpu_data(root: Path):
     dest_path = root / "geoglows" / "input" / "305_daily_sparse_runoff.feather"

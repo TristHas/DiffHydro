@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 from .utils import MLP
-from .. import LTIStagedRouter, LTIRouter, RivTreeCluster, RivTree, nse_fn
+from .. import LTIRouter, RivTreeCluster, RivTree, nse_fn
 
 class LearnedRouter(nn.Module):
     """
@@ -18,13 +18,14 @@ class LearnedRouter(nn.Module):
             dt: float = 1.0,
             param_mins = [.005, .0],
             param_maxs = [.25, 1.2],
+            param_inits = [0., 0.],
             mlp = None,
             **routing_kwargs
         ) -> None:
         super().__init__()
         self._init_router(max_delay, dt, **routing_kwargs)
-        self._init_buffers(param_mins, param_maxs)
-        self.mlp = mlp or MLP(in_dim=3, out_dim=2)
+        self._init_buffers(param_mins, param_maxs, param_inits)
+        self.mlp = mlp or MLP(in_dim=2, out_dim=2)
 
     def _init_router(self, max_delay, dt, **routing_kwargs):
         self.staged_router = LTIStagedRouter(
@@ -37,13 +38,14 @@ class LearnedRouter(nn.Module):
                     )
 
     
-    def _init_buffers(self, param_mins, param_maxs):
+    def _init_buffers(self, param_mins, param_maxs, param_inits):
+        self.register_buffer("param_init", torch.tensor(param_inits)[None])
         self.register_buffer("offset", torch.tensor(param_mins)[None])
         self.register_buffer("range", (torch.tensor(param_maxs) -\
                                        torch.tensor(param_mins))[None])
 
     def _read_params(self, p):
-        return torch.sigmoid(self.mlp(p)) * self.range + self.offset
+        return torch.sigmoid(self.mlp(p) + self.param_init) * self.range + self.offset
         
     def read_params(self, g):
         if isinstance(g, RivTree):
@@ -145,8 +147,8 @@ class LearningModule(nn.Module):
             q_init = self.model.init_upstream_discharges(inp, self.tr_g, cluster_idx)
 
         idxs = self.tr_g[cluster_idx].nodes
-        inp = inp[idxs]
-        lbl = lbl[idxs]
+        inp = inp.sel(spatial=idxs)
+        lbl = lbl.sel(spatial=idxs)
         out = self.model.route_one_cluster(inp, self.tr_g, cluster_idx, q_init)
         out = out.values[...,self.tr_data.init_len:]
         
@@ -168,7 +170,7 @@ class LearningModule(nn.Module):
             nse = self.train_one_iter_one_cluster(cluster_idx)
             nses.append(nse)
             pbar.set_postfix({f"Tr NSE cluster {cluster_idx}:": nse})
-        test_nse = self.test_one_epoch_one_cluster(cluster_idx)
+        test_nse = self.test_one_epoch_one_cluster(min(len(self.te_g) - 1, cluster_idx))
         return test_nse, np.mean(nses)
 
     def test_one_epoch_one_cluster(self, cluster_idx):
@@ -179,8 +181,8 @@ class LearningModule(nn.Module):
         with torch.no_grad():
             q_init = self.model.init_upstream_discharges(inp, self.te_g, cluster_idx)
             idxs   = self.te_g[cluster_idx].nodes
-            inp    = inp[idxs]
-            lbl    = lbl[idxs]
+            inp    = inp.sel(spatial=idxs)
+            lbl    = lbl.sel(spatial=idxs)
             out    = self.model.route_one_cluster(inp, self.te_g, cluster_idx, q_init)
         
             nse = nse_fn(out.values[...,self.tr_data.init_len:],

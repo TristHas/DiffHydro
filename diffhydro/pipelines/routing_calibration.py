@@ -4,7 +4,7 @@ import pandas as pd
 
 import torch
 import torch.nn as nn
-from .. import LTIStagedRouter, LTIRouter, RivTreeCluster, RivTree, nse_fn
+from .. import LTIRouter, RivTreeCluster, RivTree, nse_fn
 
 class CalibrationRouter(nn.Module):
     """
@@ -27,7 +27,7 @@ class CalibrationRouter(nn.Module):
     def _init_router(self, max_delay, dt, **routing_kwargs):
         if isinstance(self.g, RivTreeCluster):
             self.staged = True
-            self.router = LTIStagedRouter(
+            self.router = LTIRouter(
                               max_delay=max_delay,
                               dt=dt, **routing_kwargs
                         )
@@ -157,8 +157,8 @@ class CalibrationModule(nn.Module):
             q_init = self.model.init_upstream_discharges(inp, cluster_idx)
 
         idxs = self.model.g[cluster_idx].nodes
-        inp = inp[idxs]
-        lbl = lbl[idxs]
+        inp = inp.sel(spatial=idxs)
+        lbl = lbl.sel(spatial=idxs)
         out = self.model.route_one_cluster(inp, cluster_idx, q_init)
         out = out.values[...,self.tr_data.init_len:]
         
@@ -191,8 +191,8 @@ class CalibrationModule(nn.Module):
         with torch.no_grad():
             q_init = self.model.init_upstream_discharges(inp, cluster_idx)
             idxs   = self.model.g[cluster_idx].nodes
-            inp    = inp[idxs]
-            lbl    = lbl[idxs]
+            inp    = inp.sel(spatial=idxs)
+            lbl    = lbl.sel(spatial=idxs)
             out    = self.model.route_one_cluster(inp, cluster_idx, q_init)
         
             nse = nse_fn(out.values[...,self.tr_data.init_len:],
@@ -207,4 +207,5 @@ class CalibrationModule(nn.Module):
             results = [self.train_one_epoch_one_cluster(cluster_idx, n_iter) for _ in range(n_epoch)]
             te_nse, tr_nse = map(pd.Series, zip(*results))
         results.append([te_nse, tr_nse])
-        return results
+        te_nse, tr_nse = zip(*results)
+        return te_nse, tr_nse #pd.concat(te_nse), pd.Series(tr_nse)

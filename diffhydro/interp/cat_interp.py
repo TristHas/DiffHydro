@@ -3,8 +3,10 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import xtensor as xt
 
-from ..structs import TimeSeriesThDF, BufferList
+from .utils import BufferList
+from ..structs import ensure_bst_dims
 
 def index_precompute(cin, cout,            # (N,) int64
                      map_river, map_pixel, # (R,) int64  (unordered OK)
@@ -78,15 +80,19 @@ def river_to_pixel_gpu_pt(vals,                # (N, F) float32/64, **must** be 
     out = aggregate(vals, weight, idx, row_id, M, inverse, p_in, c_out_unique)
     return out, c_out_unique, p_in
 
+def coords_lookup(dtensor: xt.DataTensor) -> pd.Series:
+    idx = dtensor.values.cpu().numpy()
+    return pd.Series(np.arange(len(idx), dtype=np.int64), index=idx)
+    
 class CatchmentInterpolator(nn.Module):
-    def __init__(self, g, pixel_df, weight_df):
+    def __init__(self, g, pixel_runoff, weight_df):
         """
             weight_df: pd.DataFrame with index values in g nodes and columns pixel_idxs and area_sqm_total
             Maybe here we should assume that weight_df only contains the relevant pixels.
             So that when we interpolate the kernel, we interpolate it only for the needed inputs.
         """
         super().__init__()
-        input_pixel_idxs = pixel_df._columns
+        input_pixel_idxs = coords_lookup(pixel_runoff["spatial"])
         output_cat_idxs = g.nodes_idx
         
         weight_subset = weight_df.loc[output_cat_idxs.index] # First only select the relevant rows
@@ -108,14 +114,22 @@ class CatchmentInterpolator(nn.Module):
             runoff is expected to be arranged according to the nodes_idx of g?
             what is the difference between map_inp and nodes_idx?
         """
+        ensure_bst_dims(runoff)
+        native_dtype = runoff.dtype
+        runoff = runoff.to(dtype=self.weights.dtype)
+        
         weighted_x = runoff.values[:, self.src_idxs] * self.weights[None, :, None]  # broadcasts over the time dimension
         out_size = runoff.shape[0], self.n_cats, runoff.shape[-1]
         out = torch.zeros(out_size, 
                           dtype=runoff.dtype, device=runoff.device)
         out.index_add_(1, self.dest_idxs, weighted_x)
-        return TimeSeriesThDF(out, 
-                              columns=self.map_out.index, 
-                              index=runoff._index)
+        return xt.DataTensor(
+            out.to(dtype=native_dtype),
+            coords={"batch":runoff["batch"],
+                    "spatial":self.map_out.index,
+                    "time":runoff["time"]},
+            dims = ["batch", "spatial", "time"]
+        )
     
     def interpolate_kernel(self, irfs_agg, coords):
         """
@@ -130,7 +144,7 @@ class CatchmentInterpolator(nn.Module):
         return irfs_agg_pixel, coords_pixel, kernel_size
 
     def forward(self, inp):
-        if isinstance(inp, TimeSeriesThDF):
+        if isinstance(inp, xt.DataTensor):
             return self.interpolate_runoff(inp)
         elif isinstance(inp, SparseKernel):
             return self.interpolate_kernel(inp.values, inp.coords)
@@ -138,19 +152,21 @@ class CatchmentInterpolator(nn.Module):
             raise NotImplementedError()
             
 class StagedCatchmentInterpolator(nn.Module):
-    def __init__(self, gs, pixel_df, weight_df):
+    def __init__(self, gs, pixel_runoff, weight_df):
         """
         """
         super().__init__()
-        input_pixel_idxs = pixel_df._columns
+        ensure_bst_dims(pixel_runoff)
+        input_pixel_idxs = coords_lookup(pixel_runoff["spatial"])
         output_cat_idxs = gs.nodes_idx
         
         weight_df = weight_df.loc[output_cat_idxs.index] # First only select the relevant rows
         pixel_columns, pixel_idxs, cis = [], [], []
         for g in tqdm(gs):
-            weight_subset = weight_df.loc[g.nodes]
-            pixel_col = input_pixel_idxs[weight_subset["pixel_idx"].unique()] #weight_subset["pixel_idx"].unique() #
-            pixel_subset_df = pixel_df[pixel_col.index]
+            weight_subset = weight_df.loc[g.nodes[0]:g.nodes[-1]] #weight_df.loc[g.nodes]
+            # Above change is slightly risky but much faster
+            pixel_col = input_pixel_idxs[weight_subset["pixel_idx"].unique()]
+            pixel_subset_df = pixel_runoff.sel(spatial=pixel_col.index)
             
             pixel_idxs.append(torch.from_numpy(pixel_col.values))
             cis.append(CatchmentInterpolator(g, pixel_subset_df, weight_subset))
@@ -171,9 +187,16 @@ class StagedCatchmentInterpolator(nn.Module):
         return self.cis[idx]
 
     def read_pixels(self, runoff, idx):
-        return TimeSeriesThDF(runoff.values[:,self.pix_idxs[idx]],
-                              columns=self.cis[idx].map_inp.index, 
-                              index=runoff._index)
+        ensure_bst_dims(runoff)
+        spatial_coords = tuple(self.cis[idx].map_inp.index)
+        values = runoff.values[:, self.pix_idxs[idx]]
+        return xt.DataTensor(
+            values,
+            coords={"batch":runoff["batch"],
+                    "spatial":self.cis[idx].map_inp.index,
+                    "time":runoff["time"]},
+            dims = ["batch", "spatial", "time"]
+        )
 
     def interpolate_runoff(self, runoff, idx):
         local_runoff = self.read_pixels(runoff, idx)
@@ -181,10 +204,14 @@ class StagedCatchmentInterpolator(nn.Module):
 
     def interpolate_all_runoff(self, runoff):
         values = torch.cat([x.values for x in self.yield_all_runoffs(runoff)], dim=1)
-        return TimeSeriesThDF(values, 
-                              columns=self.map_out.index, 
-                              index=runoff._index)
-        
+        return xt.DataTensor(
+            values,
+            coords={"batch":runoff["batch"],
+                    "spatial":self.map_out.index,
+                    "time":runoff["time"]},
+            dims = ["batch", "spatial", "time"]
+        )
+
     def yield_all_runoffs(self, runoff, display_progress=False):
         pbar = tqdm if display_progress else lambda y: y
         for idx in pbar(range(len(self))):

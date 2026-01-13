@@ -105,20 +105,7 @@ class JointRoutingRunoffDataset(Dataset):
     def __getitem__(self, idx):
         y = self.y.isel(time=slice(idx, idx + self.total_len)) #slice(middle, end)
         x = self.x_dyn.isel(time=slice(idx, idx + self.total_len))
-        x = self.concat_x_dyn_stat(x)
         return x, y
-
-    def concat_x_dyn_stat(self, x_slice):
-        if self.x_stat is None:
-            return x_slice
-        x_stat = self.x_stat.values[None, :, None,:].expand(-1, -1, x_slice.shape[2], -1)
-        x = torch.cat([x_stat, x_slice.values], dim=-1)
-        
-        x_coords = {k:v for k,v in x_slice.coords.items()}
-        x_dims = x_slice.dims
-        x_coords["variable"] = np.arange(x.shape[-1])
-        
-        return xt.DataTensor(x, coords=x_coords, dims=x_dims)
 
     def read_statics(self, device):
         lbl_var = self.y_var.to(device)
@@ -126,7 +113,8 @@ class JointRoutingRunoffDataset(Dataset):
         channel_dist =self.channel_dist.to(device)
         g = self.g.to(device)
         init_window = self.init_len
-        return g, lbl_var, cat_area, channel_dist, init_window
+        return (g, self.x_stat, lbl_var, 
+                cat_area, channel_dist, init_window)
 
     def __len__(self):
         return len(self.x_dyn.coords["time"]) - self.total_len

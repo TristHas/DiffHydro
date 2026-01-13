@@ -1,6 +1,8 @@
 from tqdm.auto import tqdm
 
+import numpy as np
 import pandas as pd
+
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, Sampler, DataLoader
@@ -9,7 +11,7 @@ from xtensor import DataTensor
 from .utils import collate_fn
 from .. import LTIRouter, Runoff
 
-PARAMS_BOUNDS = {
+PARAMS_BOUNDS_old = {
     "muskingum":(torch.tensor([.1, 0.01])[None], # Parameter k and v minimum values
                  torch.tensor([5, .4])[None],    # Parameter k and v values range
                  torch.tensor([-3., -3.])[None]),# Parameter k and v initial values (before sigmoid)
@@ -27,16 +29,46 @@ PARAMS_BOUNDS = {
               torch.tensor([-3,  0])[None]),
 }
 
+PARAMS_BOUNDS = {"hayami":pd.DataFrame({"c":[.5, 12, "mid"], "D":[.1, .8, "low"]}, index=["min", "max", "init"]),
+                 "pure_lag":pd.DataFrame({"delay":[.1, 5, "low"]}, index=["min", "max", "init"]),
+                 "linear_storage":pd.DataFrame({"tau":[.1, 9.9, "mid"]}, index=["min", "max", "init"]),
+                 "nash_cascade":pd.DataFrame({"tau":[.05, 3.25, "low"]}, index=["min", "max", "init"]),
+                 "muskingum":pd.DataFrame({"k":[.1, 5, "low"], "x":[.1, .4, "low"]}, index=["min", "max", "init"])}
+
+def infer_param_bounds(irf_fn, runoff_temp_res_h):
+    """
+    """
+    params = PARAMS_BOUNDS[irf_fn].copy()
+    if irf_fn=="hayami":
+        params.loc[["min", "max"]]*=runoff_temp_res_h
+    if irf_fn=="muskingum":
+        params.loc[["min", "max"], "k"]/=runoff_temp_res_h
+    if irf_fn=="linear_storage":
+        params.loc[["min", "max"]]/=runoff_temp_res_h
+    if irf_fn=="nash_cascade":
+        params.loc[["min", "max"]]/=runoff_temp_res_h
+    return params
+
+def format_param_bounds(irf_fn, runoff_temp_res_h):
+    bounds_df = infer_param_bounds(irf_fn, runoff_temp_res_h)
+    bounds_df = bounds_df.replace({"mid":"0", "low":"-3", "high":"3"}).astype("float32")
+    
+    return ( 
+         torch.from_numpy(bounds_df.loc["min"].values),
+         torch.from_numpy(bounds_df.loc["max"].values),
+         torch.from_numpy(bounds_df.loc["init"].values)
+       )
+
 M3S_TO_MMKM2 = 10**12 / (3600 * 10**9)
 
-def mm_to_m3s(runoff: DataTensor, cat_area, res_temp_h=1): # TODO: handle other temporal resolution
+def mm_to_m3s(runoff: DataTensor, cat_area, temp_res_h=1): # TODO: handle other temporal resolution
     scale = cat_area.to(runoff.values.device).view(1, -1, 1)
-    values = runoff.values * scale * M3S_TO_MMKM2 / res_temp_h
+    values = runoff.values * scale * M3S_TO_MMKM2 / temp_res_h
     return DataTensor(values, dims=runoff.dims, coords=runoff.coords)
 
-def m3s_to_mm(discharge: DataTensor, basin_area, res_temp_h=1):
+def m3s_to_mm(discharge: DataTensor, basin_area, temp_res_h=1):
     scale = basin_area.to(discharge.values.device).view(1, -1, 1)
-    values = discharge.values / (scale * M3S_TO_MMKM2 / res_temp_h)
+    values = discharge.values / (scale * M3S_TO_MMKM2 / temp_res_h)
     return DataTensor(values, dims=discharge.dims, coords=discharge.coords)
 
 class CalibrationModel(nn.Module):
@@ -58,11 +90,12 @@ class LearnedRouter(nn.Module):
             param_model,
             max_delay: int = 32,
             dt: float = 1.0,
+            temp_res_h: float = 1.0,
             **routing_kwargs
         ) -> None:
         super().__init__()
         self._init_router(max_delay, dt, **routing_kwargs)
-        self._init_buffers(irf_name)
+        self._init_buffers(irf_name, temp_res_h)
         self.param_model = param_model
 
     def _init_router(self, max_delay, dt, **routing_kwargs):
@@ -72,8 +105,8 @@ class LearnedRouter(nn.Module):
                     )
 
     
-    def _init_buffers(self, irf_name):
-        param_mins, param_maxs, param_inits = PARAMS_BOUNDS[irf_name]
+    def _init_buffers(self, irf_name, temp_res_h):
+        param_mins, param_maxs, param_inits = format_param_bounds(irf_name, temp_res_h)
         self.register_buffer("param_init", param_inits)
         self.register_buffer("offset", param_mins)
         self.register_buffer("range", param_maxs)# - param_mins
@@ -99,24 +132,25 @@ class RunoffRoutingModel(nn.Module):
                  max_delay: int = 32,
                  dt: float = 1.0,
                  irf_name="hayami",
-                 res_temp_h=1,
+                 temp_res_h=1,
                  **routing_kwargs):
         """
         """
         super().__init__()
-        self.res_temp_h = res_temp_h
+        self.temp_res_h = temp_res_h
         self.runoff_model  = Runoff(input_size=input_size, softplus=True)     
         self.routing_model = LearnedRouter( irf_name,
                                             max_delay=max_delay, dt=dt,
                                             param_model=param_model,
+                                            temp_res_h=temp_res_h,
                                             **routing_kwargs
                                            )
         
-    def forward(self, inp, g, cat_area, additional_params=None):
+    def forward(self, inp_dyn, inp_stat, g, cat_area, additional_params=None):
         """
         """
-        runoff_mm  = self.runoff_model(inp)
-        runoff_m3s = mm_to_m3s(runoff_mm, cat_area, self.res_temp_h)
+        runoff_mm  = self.runoff_model(inp_dyn, inp_stat)
+        runoff_m3s = mm_to_m3s(runoff_mm, cat_area, self.temp_res_h)
         return self.routing_model(runoff_m3s, g, additional_params)
 
 class StridedStartSampler(Sampler[int]):
@@ -190,19 +224,21 @@ class RunoffRoutingModule(nn.Module):
     
             val_loss = self.valid_epoch(device=device)
             val_losses.append(val_loss)
-            
+
+        tr_losses  = pd.Series([np.mean(1-np.array(x)) for x in tr_losses])
+        val_losses = pd.Series([np.mean(x) for x in val_losses])
         return tr_losses, val_losses
 
     def train_epoch(self, device):
         losses = []
-        (g, lbl_var, cat_area, 
+        (g, x_stat, lbl_var, cat_area, 
          channel_dist, init_window) = self.tr_ds.read_statics(device)
         
         for x,y in tqdm(self.tr_dl):
             x = x.to(device)
             y = y.to(device)
     
-            o = self.model(x, g, cat_area, channel_dist)
+            o = self.model(x, x_stat, g, cat_area, channel_dist)
             o = o.sel(spatial=y.coords["spatial"])
             
             o = o.isel(time=slice(init_window, None))
@@ -236,7 +272,7 @@ class RunoffRoutingModule(nn.Module):
         return loss
         
     def valid_epoch(self, device):
-        (g, lbl_var, cat_area, 
+        (g, x_stat, lbl_var, cat_area, 
          channel_dist, init_window) = self.val_ds.read_statics(device)
 
         losses = []
@@ -245,7 +281,7 @@ class RunoffRoutingModule(nn.Module):
                 x = x.to(device)
                 y = y.to(device)
                 
-                o = self.model(x, g, cat_area, channel_dist)
+                o = self.model(x, x_stat, g, cat_area, channel_dist)
                 o = o.sel(spatial=y.coords["spatial"])
                 
                 o = o.isel(time=slice(init_window,None))
@@ -256,16 +292,16 @@ class RunoffRoutingModule(nn.Module):
                 
         return losses
 
-    def extract_test(self, device):
-        (g, lbl_var, cat_area, 
-         channel_dist, init_window) = self.val_ds.read_statics(device)
+    def extract_full_ts(self, dl, device):
+        (g, x_stat, lbl_var, cat_area, 
+         channel_dist, init_window) = dl.dataset.read_statics(device)
         data = []
         with torch.no_grad(): 
-            for x,y in tqdm(self.val_dl):
+            for x,y in tqdm(dl):
                 x = x.to(device)
                 y = y.to(device)
                 
-                o = self.model(x, g, cat_area, channel_dist)
+                o = self.model(x, x_stat, g, cat_area, channel_dist)
                 o = o.sel(spatial=y.coords["spatial"])
                 
                 o = o.isel(time=slice(init_window, None))

@@ -1,11 +1,12 @@
 import itertools
+import torch
 import torch.nn as nn
 import xtensor as xt
 
 from ..structs import ensure_bst_dims
 
 from diffroute import (
-    RivTree,
+    RivTree, RivTreeCluster,
     LTIRouter as LTIRouterCore,
     LTIStagedRouter as LTIStagedRouterCore,
 )
@@ -19,13 +20,38 @@ class LTIRouter(nn.Module):
         self.core = LTIRouterCore(**kwargs)
         self.staged_core = LTIStagedRouterCore(**kwargs)
 
-    def forward(self, runoff: xt.DataTensor, g, params=None) -> xt.DataTensor:
+    def forward(self, 
+                runoff: xt.DataTensor, 
+                g, 
+                params=None, 
+                cluster_idx=None) -> xt.DataTensor:
         """
         """
-        router = self.core if isinstance(g, RivTree) else self.staged_core
-        discharge = router(runoff.values, g, params) 
-        return xt.DataTensor(discharge, dims=runoff.dims, coords=runoff.coords)
+        if cluster_idx is None:
+            router = self.core if isinstance(g, RivTree) else self.staged_core
+            discharge = router(runoff.values, g, params) 
+            return xt.DataTensor(discharge, dims=runoff.dims, coords=runoff.coords)
+        else:
+            assert isinstance(g, RivTreeCluster), \
+                   f"LTIRouter.forward only accepts cluster_idx \
+                   for RivTreeCluster graphs, got {type(g)}"
+            return self._forward_seq(runoff, g, 
+                                     cluster_idx=cluster_idx, 
+                                     params=params)
+            
+    def _forward_seq(self, runoff: xt.DataTensor, gs, cluster_idx, params=None):
+        if isinstance(params, torch.Tensor):
+            params = [params[s:e] for s, e in gs.node_ranges[:cluster_idx+1]]
 
+        with torch.no_grad():
+            q_init = self._init_upstream_discharges(runoff, gs, cluster_idx, params)
+        
+        start, end = gs.node_ranges[cluster_idx]
+        runoff = runoff.isel(spatial=slice(start, end))
+        discharge = self._route_one_cluster(runoff, gs, cluster_idx,
+                                            params[cluster_idx], q_init)
+        return discharge
+        
     ###
     ### Iterative routing procedure helpers
     ###
@@ -33,7 +59,9 @@ class LTIRouter(nn.Module):
         """
         """
         meta_q = []
-        
+        if isinstance(params, torch.Tensor):
+            params = [params[s:e] for s, e in gs.node_ranges]
+
         def xs_tensor_gen(runoff_iter):
             for x in runoff_iter:
                 meta_q.append((x.dims, x.coords))
@@ -46,7 +74,7 @@ class LTIRouter(nn.Module):
             dims, coords = meta_q.pop(0)
             yield xt.DataTensor(discharge, dims=dims, coords=coords)
     
-    def route_one_cluster(self,
+    def _route_one_cluster(self,
                           runoff: xt.DataTensor,
                           gs,
                           cluster_idx: int,
@@ -54,13 +82,16 @@ class LTIRouter(nn.Module):
                           transfer_bucket=None):
         """
         """
-        y_c, transfer_bucket = self.staged_core.route_one_cluster(
+        # if isinstance(params, torch.Tensor):
+        #     s, e = gs.node_ranges[cluster_idx]
+        #     params = params[s:e]
+        q, upstream_q = self.staged_core.route_one_cluster(
             runoff.values, gs, cluster_idx, 
             params, transfer_bucket
         )
-        return xt.DataTensor(y_c, dims=runoff.dims, coords=runoff.coords)
+        return xt.DataTensor(q, dims=runoff.dims, coords=runoff.coords)
     
-    def init_upstream_discharges(self, runoff, gs, cluster_idx, 
+    def _init_upstream_discharges(self, runoff, gs, cluster_idx, 
                                  params=None):
         """
         """
@@ -68,10 +99,9 @@ class LTIRouter(nn.Module):
             xs_tensor_gen = (runoff.values[:, s:e] for s, e in gs.node_ranges)
         else:
             xs_tensor_gen = (x_df.values for x_df in runoff) 
+
         return self.staged_core.init_upstream_discharges(
              xs_tensor_gen, gs,
              cluster_idx,
              params=params,
         )
-
-#LTIStagedRouter = LTIRouter

@@ -16,7 +16,10 @@ class Runoff(nn.Module):
     def forward(self, inp_dyn: xt.DataTensor, inp_stat=None) -> xt.DataTensor:
         """
         """
-        inp = xt.concat([inp_dyn, inp_stat], "variable")
+        if inp_stat is None:
+            inp = inp_dyn
+        else:
+            inp = xt.concat([inp_dyn, inp_stat], "variable")
         batch, spatial, time, var = inp.shape
         inp = inp.values.reshape(batch * spatial, time, var)
         

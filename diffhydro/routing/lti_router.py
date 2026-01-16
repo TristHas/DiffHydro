@@ -7,7 +7,6 @@ from ..structs import ensure_bst_dims
 
 from diffroute import (
     RivTree, RivTreeCluster,
-    LTIRouter as LTIRouterCore,
     LTIStagedRouter as LTIStagedRouterCore,
 )
 from diffroute.irfs import IRF_FN
@@ -18,8 +17,7 @@ class LTIRouter(nn.Module):
     """
     def __init__(self, *args, **kwargs):
         super().__init__()
-        self.core = LTIRouterCore(**kwargs)
-        self.staged_core = LTIStagedRouterCore(**kwargs)
+        self.core = LTIStagedRouterCore(**kwargs)
 
     def forward(self, 
                 runoff: xt.DataTensor, 
@@ -29,7 +27,8 @@ class LTIRouter(nn.Module):
         """
         """
         if cluster_idx is None:
-            router = self.core if isinstance(g, RivTree) else self.staged_core
+            router = self.core.model if isinstance(g, RivTree) else \
+                     self.core
             discharge = router(runoff.values, g, params) 
             return xt.DataTensor(discharge, dims=runoff.dims, 
                                  coords=runoff.coords,
@@ -70,7 +69,7 @@ class LTIRouter(nn.Module):
                 meta_q.append((x.dims, x.coords))
                 yield x.values
         
-        core_iter = self.staged_core.route_all_clusters_yield(xs_tensor_gen(runoff_iter), 
+        core_iter = self.core.route_all_clusters_yield(xs_tensor_gen(runoff_iter), 
                                                                gs, params=params)
         
         for discharge in core_iter:
@@ -86,7 +85,7 @@ class LTIRouter(nn.Module):
                           transfer_bucket=None):
         """
         """
-        q, upstream_q = self.staged_core.route_one_cluster(
+        q, upstream_q = self.core.route_one_cluster(
             runoff.values, gs, cluster_idx, 
             params, transfer_bucket
         )
@@ -100,8 +99,7 @@ class LTIRouter(nn.Module):
             xs_tensor_gen = (runoff.values[:, s:e] for s, e in gs.node_ranges)
         else:
             xs_tensor_gen = (x_df.values for x_df in runoff) 
-
-        return self.staged_core.init_upstream_discharges(
+        return self.core.init_upstream_discharges(
              xs_tensor_gen, gs,
              cluster_idx,
              params=params,
@@ -111,22 +109,27 @@ class LTIRouter(nn.Module):
     ### Kernel helpers
     ###
     def compute_path_irfs(self, g, params=None, inp_channels=None, out_channels=None):
-        kernel = self.core.aggregator(g, params).to(runoff.device)
+        kernel = self.core.aggregator(g, params)#.to(runoff.device)
         msk = torch.ones_like(kernel.coords[:,0], dtype=torch.bool)
+        if out_channels is not None:
+            msk *= torch.isin(kernel.coords[:,0], 
+                              torch.tensor(g.nodes_idx[inp_channels].values,
+                                           device=kernel.coords.device))
         if inp_channels is not None:
-            msk *= (kernel.coords[:,0] == torch.tensor(g.node_idxs[inp_channels]))
-        if inp_channels is not None:
-            msk *= (kernel.coords[:,0] == torch.tensor(g.node_idxs[inp_channels]))
-        return kernel.vals[msk]
+            msk *= torch.isin(kernel.coords[:,1], 
+                              torch.tensor(g.nodes_idx[inp_channels].values,
+                                           device=kernel.coords.device))
+        return kernel.coords[msk], kernel.vals[msk]
         
-    def compute_channel_irfs(self, g, params=None, inp_channels=None):
+    def compute_channel_irfs(self, g, params=None, channels=None):
         irf_fn = IRF_FN[g.irf_fn]
         if params is None: params = g.params
         
         irfs= irf_fn(params, 
-                       time_window=self.core.time_window, 
-                       dt=self.core.dt).squeeze()
-        if inp_channels is not None:
-            msk = torch.tensor(g.node_idxs[inp_channels])
+                       time_window=self.core.model.aggregator.max_delay, 
+                       dt=self.core.model.aggregator.dt).squeeze()
+        if channels is not None:
+            msk = torch.tensor(g.nodes_idx[channels].values,
+                               device=irfs.device)
             irfs = irfs[msk]
         return irfs

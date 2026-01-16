@@ -115,13 +115,14 @@ class StridedStartSampler(Sampler[int]):
     def __len__(self):
         return (self.dataset_len + self.stride - 1) // self.stride
 
-def format_batched_series(batches, ds):
+def format_batched_series(batches, ds, name="tensor"):
     data = torch.cat([x.transpose("spatial", "batch", "time")\
                        .values.contiguous().view(x.sizes["spatial"], -1)\
                       for x in batches], -1)
     coords = {"spatial": ds.y.coords["spatial"],
               "time"   : ds.y.coords["time"][ds.init_len:data.shape[-1] + ds.init_len]}
-    return xt.DataTensor(data, dims=("spatial", "time"), coords=coords)
+    return xt.DataTensor(data, dims=("spatial", "time"), 
+                         coords=coords, name=name)
         
 class RunoffRoutingModule(nn.Module):
     def __init__(self, model, 
@@ -285,8 +286,8 @@ class RunoffRoutingModule(nn.Module):
                 data.append((o,y))
                 
         o,y = zip(*data)
-        o = format_batched_series(o, ds)
-        y = format_batched_series(y, ds)
+        o = format_batched_series(o, ds, name="output")
+        y = format_batched_series(y, ds, name="target")
         return y,o
 
     def extract_val(self, batch_size, device):

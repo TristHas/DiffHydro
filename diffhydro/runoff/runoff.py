@@ -29,5 +29,6 @@ class Runoff(nn.Module):
         reshaped = reshaped.squeeze(-1)
         out_dims = inp_dyn.dims[:3]
         return xt.DataTensor(reshaped, dims=out_dims, 
-                          coords={d:inp_dyn.coords[d] \
-                                  for d in out_dims})
+                             coords={d:inp_dyn.coords[d] \
+                                      for d in out_dims},
+                             name="runoff")

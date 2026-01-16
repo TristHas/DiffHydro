@@ -10,6 +10,7 @@ from diffroute import (
     LTIRouter as LTIRouterCore,
     LTIStagedRouter as LTIStagedRouterCore,
 )
+from diffroute.irfs import IRF_FN
 
 class LTIRouter(nn.Module):
     """
@@ -30,7 +31,9 @@ class LTIRouter(nn.Module):
         if cluster_idx is None:
             router = self.core if isinstance(g, RivTree) else self.staged_core
             discharge = router(runoff.values, g, params) 
-            return xt.DataTensor(discharge, dims=runoff.dims, coords=runoff.coords)
+            return xt.DataTensor(discharge, dims=runoff.dims, 
+                                 coords=runoff.coords,
+                                 name="discharge")
         else:
             assert isinstance(g, RivTreeCluster), \
                    f"LTIRouter.forward only accepts cluster_idx \
@@ -72,7 +75,8 @@ class LTIRouter(nn.Module):
         
         for discharge in core_iter:
             dims, coords = meta_q.pop(0)
-            yield xt.DataTensor(discharge, dims=dims, coords=coords)
+            yield xt.DataTensor(discharge, dims=dims, 
+                                coords=coords, name="discharge")
     
     def _route_one_cluster(self,
                           runoff: xt.DataTensor,
@@ -82,9 +86,6 @@ class LTIRouter(nn.Module):
                           transfer_bucket=None):
         """
         """
-        # if isinstance(params, torch.Tensor):
-        #     s, e = gs.node_ranges[cluster_idx]
-        #     params = params[s:e]
         q, upstream_q = self.staged_core.route_one_cluster(
             runoff.values, gs, cluster_idx, 
             params, transfer_bucket
@@ -105,3 +106,27 @@ class LTIRouter(nn.Module):
              cluster_idx,
              params=params,
         )
+
+    ###
+    ### Kernel helpers
+    ###
+    def compute_path_irfs(self, g, params=None, inp_channels=None, out_channels=None):
+        kernel = self.core.aggregator(g, params).to(runoff.device)
+        msk = torch.ones_like(kernel.coords[:,0], dtype=torch.bool)
+        if inp_channels is not None:
+            msk *= (kernel.coords[:,0] == torch.tensor(g.node_idxs[inp_channels]))
+        if inp_channels is not None:
+            msk *= (kernel.coords[:,0] == torch.tensor(g.node_idxs[inp_channels]))
+        return kernel.vals[msk]
+        
+    def compute_channel_irfs(self, g, params=None, inp_channels=None):
+        irf_fn = IRF_FN[g.irf_fn]
+        if params is None: params = g.params
+        
+        irfs= irf_fn(params, 
+                       time_window=self.core.time_window, 
+                       dt=self.core.dt).squeeze()
+        if inp_channels is not None:
+            msk = torch.tensor(g.node_idxs[inp_channels])
+            irfs = irfs[msk]
+        return irfs

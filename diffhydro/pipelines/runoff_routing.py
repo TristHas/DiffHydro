@@ -71,7 +71,9 @@ class RunoffRoutingModule(BaseModule):
         ])
         if (scheduler_step_size is not None):
             self.scheduler = torch.optim.lr_scheduler.StepLR(
-                                opt, step_size=100, gamma=0.3
+                                self.opt, 
+                                step_size=scheduler_step_size, 
+                                gamma=scheduler_gamma
             )
         else:
             self.scheduler = None

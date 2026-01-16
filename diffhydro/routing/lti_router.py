@@ -126,10 +126,20 @@ class LTIRouter(nn.Module):
         if params is None: params = g.params
         
         irfs= irf_fn(params, 
-                       time_window=self.core.model.aggregator.max_delay, 
-                       dt=self.core.model.aggregator.dt).squeeze()
+                     time_window=self.max_delay, 
+                     dt=self.dt).squeeze()
+        
         if channels is not None:
             msk = torch.tensor(g.nodes_idx[channels].values,
                                device=irfs.device)
             irfs = irfs[msk]
         return irfs
+
+    @property
+    def dt(self):
+        return self.core.model.aggregator.dt
+
+    @property
+    def max_delay(self):
+        return self.core.model.aggregator.max_delay
+    

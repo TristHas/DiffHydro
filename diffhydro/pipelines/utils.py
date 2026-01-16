@@ -9,8 +9,9 @@ import xtensor as xt
 from .. import RivTree
 
 PARAMS_BOUNDS = {
-     "hayami":pd.DataFrame({"c": [.5, 12.5, "mid"], 
-                            "D" : [.1, .9, "low"]}, 
+     "hayami":pd.DataFrame({
+                            "D":  [ .1,   .9,   "low"],
+                            "c":  [ .5,    12.5,  "mid"]},
                             index=["min", "max", "init"]),
      "pure_lag":pd.DataFrame({"delay":[.1, 5, "low"]}, 
                              index=["min", "max", "init"]),
@@ -28,7 +29,7 @@ def infer_param_bounds(irf_fn, runoff_temp_res_h):
     """
     params = PARAMS_BOUNDS[irf_fn].copy()
     if irf_fn=="hayami":
-        params.loc[["min", "max"]]*=runoff_temp_res_h
+        params.loc[["min", "max"]] *=runoff_temp_res_h
     if irf_fn=="muskingum":
         params.loc[["min", "max"], "k"]/=runoff_temp_res_h
     if irf_fn=="linear_storage":

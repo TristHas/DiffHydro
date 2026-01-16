@@ -7,10 +7,6 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-from .structs import DataTensor
-from .structs import ensure_bst_dims
-
-
 def nse_fn(o: torch.Tensor, lbl: torch.Tensor, 
            var_y = None,
            eps: float = 1e-12, dim: int = -1):
@@ -26,40 +22,6 @@ def nse_fn(o: torch.Tensor, lbl: torch.Tensor,
     if var_y is None:
         var_y = torch.var(lbl, dim=dim, unbiased=False)
     return 1.0 - mse / (var_y.clamp_min(eps))
-
-
-class SimpleTimeSeriesSampler(nn.Module):
-    def __init__(self, x: DataTensor, y: DataTensor, init_len, pred_len):
-        super().__init__()
-        ensure_bst_dims(x)
-        ensure_bst_dims(y)
-        if (x["time"] != y["time"]).any():
-            raise ValueError("Index misalignment")
-        self.x = x
-        self.y = y
-        self.init_len = init_len
-        self.pred_len = pred_len
-        self.n_samples = self.x.shape[-1] - self.init_len - self.pred_len
-
-    def to(self, *args, **kwargs):
-        self.x = self.x.to(*args, **kwargs)
-        self.y = self.y.to(*args, **kwargs)
-        return self
-        
-    def __getitem__(self, idx):
-        start = idx
-        middle = idx + self.init_len
-        end = idx + self.init_len + self.pred_len
-        x_slice = self.x.isel(time=slice(start, end))
-        y_slice = self.y.isel(time=slice(middle, end))
-        return x_slice, y_slice
-        
-    def __len__(self):
-        return self.n_samples
-
-    def sample(self):
-        idx = np.random.choice(self.n_samples)
-        return self[idx]
         
 class Timer:
     def __init__(self, device="cuda"):

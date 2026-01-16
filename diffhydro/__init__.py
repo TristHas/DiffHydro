@@ -1,6 +1,5 @@
-from .interp import CatchmentInterpolator, StagedCatchmentInterpolator
-from .routing import LTIRouter
-from .runoff import Runoff
+from .modules import Runoff, LTIRouter, CatchmentInterpolator, StagedCatchmentInterpolator
+
 from .structs import (
     DataTensor,
     RivTree,

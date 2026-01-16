@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import xtensor as xt
 
-from ..structs import ensure_bst_dims
+from ...structs import ensure_bst_dims
 
 from diffroute import (
     RivTree, RivTreeCluster,

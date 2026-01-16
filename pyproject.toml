@@ -8,19 +8,34 @@ license = "MIT"
 authors = [
     {name = "Tristan Hascoet", email = "tristan.hascoet@gmail.com"}
 ]
+keywords = ["hydrology", "pytorch", "differentiable-programming", "routing", "runoff"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Hydrology"
+]
 dependencies = [
     "diffroute>=0.1.0",
     "torch>=2.0.0",
     "pandas",
     "numpy",
-    "tqdm"
+    "tqdm",
+    "xtensor-datatensor"
 ]
 
 [project.optional-dependencies]
 examples = [
     "requests",
     "xarray",
-    "s3fs"
 ]
 
 [project.urls]
@@ -32,4 +47,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["diffhydro"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["diffhydro*"]

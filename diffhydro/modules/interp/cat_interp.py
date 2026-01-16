@@ -6,7 +6,7 @@ import torch.nn as nn
 import xtensor as xt
 
 from .utils import BufferList
-from ..structs import ensure_bst_dims
+from ...structs import ensure_bst_dims
 
 def index_precompute(cin, cout,            # (N,) int64
                      map_river, map_pixel, # (R,) int64  (unordered OK)

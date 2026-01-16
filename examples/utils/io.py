@@ -124,8 +124,11 @@ def load_ono_data(root, device="cpu"):
     df = pd.DataFrame.from_dict(dict(g.nodes(data=True)), orient="index")
     df = df[['upa', 'catchment_area', 'channel_length']]
     df['channel_length']=df['channel_length']*30/1000
-    static_df = xt.DataTensor.from_pandas(df).to(device=device, dtype=torch.float)
     
+    static_df = xt.DataTensor.from_pandas(df).to(device=device, dtype=torch.float)
+    basin_area, cat_area, channel_dist = static_df.values.t()
+    statics = {"cat_area":cat_area, "channel_dist":channel_dist}
+
     routing_inp_df = df[['upa', 'channel_length']]
     routing_inp_df = (routing_inp_df - routing_inp_df.mean())  / routing_inp_df.std()
     
@@ -133,17 +136,21 @@ def load_ono_data(root, device="cpu"):
                    param_df=routing_inp_df, 
                    param_names=routing_inp_df.columns).to(device)
 
-    inp = xt.read_pickle(ds_root / "inp.pkl")
-    inp = inp.rename({"columns":"spatial", "index":"time"}).expand_dims("batch", 0).expand_dims("variable", -1)
-    inp = inp.transpose("batch", "spatial", "time", "variable")
+    inp  = xt.read_pickle(ds_root / "inp.pkl")\
+             .rename({"columns":"spatial", "index":"time"})\
+             .expand_dims("batch", 0)\
+             .expand_dims("variable", -1)\
+             .transpose("batch", "spatial", "time", "variable")\
+             .sel(spatial=g.nodes)
     
-    lbl = xt.read_pickle(ds_root / "lbl.pkl")
-    lbl = lbl.rename({"grid_idxs":"spatial", "index":"time"}).expand_dims("batch", 0)
-    lbl = lbl.transpose("batch", "spatial", "time")
-    lbl = lbl.sel(spatial=[2982838930])
+    lbl  = xt.read_pickle(ds_root / "lbl.pkl")\
+             .rename({"grid_idxs":"spatial", "index":"time"})\
+             .expand_dims("batch", 0)\
+             .transpose("batch", "spatial", "time")\
+             .sel(spatial=[2982838930])
     
-    inp = inp.sel(spatial=g.nodes)
-    return inp, lbl, static_df, g
+    
+    return inp, lbl, statics, g
 
 def split_and_normalize_data(inp, lbl):
     inp_tr = inp.sel(time=slice(None, "2016"))

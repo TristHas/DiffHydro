@@ -6,7 +6,7 @@ from .base import BaseModule
 from .routing import LearnedRouter
 from .. import Runoff
 
-class RunoffRoutingModel(nn.Module):
+class RRModel(nn.Module):
     def __init__(self, 
                  param_model,
                  input_size = 1,
@@ -34,7 +34,7 @@ class RunoffRoutingModel(nn.Module):
         runoff_m3s = mm_to_m3s(runoff_mm, cat_area, self.temp_res_h)
         return self.routing_model(runoff_m3s, g, additional_params)
 
-class RunoffRoutingModule(BaseModule):
+class RRModule(BaseModule):
     def __init__(self, model, 
                  tr_ds, val_ds,
                  device="cuda:0",

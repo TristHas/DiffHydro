@@ -86,8 +86,8 @@ def collate_fn(batch):
 def cat_xtensor(xs):
     x_coords = {k:v for k,v in xs[0].coords.items()}
     x_dims = xs[0].dims
-    x_coords["time"] = np.arange(len(x_coords["time"]))
-    x_coords["batch"] = np.arange(len(xs))
+    x_coords["time"] = xt.arange_index(len(x_coords["time"]))
+    x_coords["batch"] = xt.arange_index(len(xs))
     values = torch.cat([x.values for x in xs])
     return xt.DataTensor(values, coords=x_coords, dims=x_dims)
     
@@ -139,7 +139,7 @@ class BaseDataset(Dataset):
         self.pred_len = pred_len
         self.total_len = self.init_len + self.pred_len
 
-        self.y_var = y.var("time")
+        self.y_var = y.var("time").clip(.0001)
         #self.cat_area = cat_area
         #self.basin_area = basin_area
         #self.channel_dist = channel_dist

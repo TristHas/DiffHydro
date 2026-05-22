@@ -21,14 +21,13 @@ class Runoff(nn.Module):
         else:
             inp = xt.concat([inp_dyn, inp_stat], "variable")
         batch, spatial, time, var = inp.shape
-        inp = inp.values.reshape(batch * spatial, time, var)
         
-        y = self.core(inp)
+        inp = inp.values.view(batch * spatial, time, var)
         
-        reshaped = y.view(batch, spatial, time, 1)
-        reshaped = reshaped.squeeze(-1)
+        y = self.core(inp).view(batch, spatial, time)
+        
         out_dims = inp_dyn.dims[:3]
-        return xt.DataTensor(reshaped, dims=out_dims, 
+        return xt.DataTensor(y, dims=out_dims, 
                              coords={d:inp_dyn.coords[d] \
                                       for d in out_dims},
                              name="runoff")

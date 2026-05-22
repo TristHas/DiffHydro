@@ -14,18 +14,20 @@ class RRModel(nn.Module):
                  dt: float = 1.0,
                  irf_name="hayami",
                  temp_res_h=1,
-                 **routing_kwargs):
+                 runoff_params={},
+                 routing_params={}):
         """
         """
         super().__init__()
         self.temp_res_h = temp_res_h
-        self.runoff_model  = Runoff(input_size=input_size, softplus=True)     
+        self.runoff_model = Runoff(input_size=input_size, 
+                                   softplus=True,
+                                   **runoff_params)
         self.routing_model = LearnedRouter( irf_name,
                                             max_delay=max_delay, dt=dt,
                                             param_model=param_model,
                                             temp_res_h=temp_res_h,
-                                            **routing_kwargs
-                                           )
+                                            **routing_params)
         
     def forward(self, inp_dyn, inp_stat, g, cat_area, additional_params=None):
         """
@@ -35,20 +37,21 @@ class RRModel(nn.Module):
         return self.routing_model(runoff_m3s, g, additional_params)
 
 class RRModule(BaseModule):
-    def __init__(self, model, 
-                 tr_ds, val_ds,
+    def __init__(self, model,
+                 tr_ds, val_ds, te_ds,
                  device="cuda:0",
                  batch_size=256,
+                 inference_batch_size=8,
                  clip_grad_norm=1,
-                 routing_lr=10**-4, 
-                 routing_wd=10**-3, 
-                 runoff_lr=.005, 
+                 routing_lr=10**-4,
+                 routing_wd=10**-3,
+                 runoff_lr=.005,
                  runoff_wd=.001,
                  scheduler_step_size=None,
                  scheduler_gamma=.1,
                  **opt_kwargs):
-        super().__init__(model, tr_ds, val_ds, device, 
-                         batch_size, clip_grad_norm)
+        super().__init__(model, tr_ds, val_ds, te_ds, device,
+                         batch_size, inference_batch_size, clip_grad_norm)
         self.init_optimizer( routing_lr=routing_lr, 
                              routing_wd=routing_wd,
                              runoff_lr=runoff_lr, 
@@ -63,11 +66,11 @@ class RRModule(BaseModule):
                        runoff_wd=.001,
                        scheduler_step_size=None,
                        scheduler_gamma=.1):
-        self.opt = torch.optim.Adam([
+        self.opt = torch.optim.AdamW([
             {'params': self.model.runoff_model.parameters(), 
              'lr': runoff_lr, 'weight_decay': runoff_wd},
             {'params': self.model.routing_model.parameters(), 
-             'lr': routing_wd, 'weight_decay': routing_wd}
+             'lr': routing_lr, 'weight_decay': routing_wd}
         ])
         if (scheduler_step_size is not None):
             self.scheduler = torch.optim.lr_scheduler.StepLR(

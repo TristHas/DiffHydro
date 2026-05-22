@@ -88,12 +88,12 @@ class CalibrationRouter(LearnedRouter):
 
 class RoutingModule(BaseModule):
     def __init__(self, model, 
-                 tr_ds, val_ds,
+                 tr_ds, val_ds, te_ds,
                  device="cuda:0",
                  batch_size=256,
                  clip_grad_norm=1,
                  lr=10**-2):
-        super().__init__(model, tr_ds, val_ds, device, batch_size, clip_grad_norm)
+        super().__init__(model, tr_ds, val_ds, te_ds, device, batch_size, clip_grad_norm)
         self.init_optimizer(lr)
 
     def run_model(self, ds, x):

@@ -43,18 +43,20 @@ def format_batched_series(batches, ds):
     return xt.DataTensor(data, dims=("spatial", "time"), coords=coords)
 
 class BaseModule(nn.Module):
-    def __init__(self, model, 
-                 tr_ds, val_ds,
-                 device,
+    def __init__(self, model,
+                 tr_ds, val_ds, te_ds=None,
+                 device="cuda:0",
                  batch_size=256,
+                 inference_batch_size=8,
                  clip_grad_norm=1):
         super().__init__()
         self.model = model
-        self.init_data(tr_ds, val_ds, batch_size)
-        
+        self.init_data(tr_ds, val_ds, te_ds, batch_size, inference_batch_size)
+
         self.clip_grad_norm = clip_grad_norm
         self.scheduler = None
         self.batch_size = batch_size
+        self.inference_batch_size = inference_batch_size
         self.device = device
 
     ###
@@ -72,30 +74,34 @@ class BaseModule(nn.Module):
     ###
     ### These functions should be used as is most for most pipelines
     ###
-    def init_data(self, tr_ds, val_ds, batch_size):
+    def init_data(self, tr_ds, val_ds, te_ds, batch_size, inference_batch_size=8):
         self.tr_ds  = tr_ds
         self.tr_dl  = init_optim_dl(tr_ds, batch_size)
         self.val_ds = val_ds
-        self.val_dl = init_inference_dl(val_ds, batch_size)
+        self.val_dl = init_inference_dl(val_ds, inference_batch_size)
+        self.te_ds  = te_ds
 
     def train(self, n_epoch, n_iter=None, device=None):
         """
             Training loop with an optional learning rate scheduler.
         """
         device = device or self.device
-        tr_losses, val_losses = [],[]
+        tr_losses, val_losses, val_nses = [],[],[]
         self.model = self.model.to(device)
         
         for epoch in range(n_epoch):
             tr_loss = self.train_epoch(device=device, n_iter=n_iter)
             tr_losses.append(tr_loss)
     
-            val_loss = self.valid_epoch(device=device)
+            val_loss = self.valid_epoch_old(device=device)
+            val_nse  = self.valid_epoch(device=device)
             val_losses.append(val_loss)
+            val_nses.append(val_nse)
+            torch.cuda.empty_cache()
 
         tr_losses  = pd.Series([np.mean(x) for x in tr_losses])
         val_losses = pd.Series([np.mean(x) for x in val_losses])
-        return tr_losses, val_losses
+        return tr_losses, val_losses, val_nses
 
     def train_epoch(self, n_iter=None, device=None):
         device = device or self.device
@@ -139,6 +145,12 @@ class BaseModule(nn.Module):
 
     def valid_epoch(self, device=None):
         device = device or self.device
+        yval, oval = self.extract_val(device=device, batch_size=self.inference_batch_size)
+        nse_val = 1 - (((yval - oval)**2).mean("time") / yval.var("time"))
+        return nse_val
+
+    def valid_epoch_old(self, device=None):
+        device = device or self.device
         init_window = self.val_ds.init_len
         lbl_var = self.val_ds.y_var.to(device)
         
@@ -161,7 +173,7 @@ class BaseModule(nn.Module):
 
     def _extract_full_ts(self, ds, batch_size, device=None):
         device = device or self.device
-        batch_size = batch_size or self.batch_size
+        batch_size = batch_size or self.inference_batch_size
         
         dl = init_inference_dl(ds, batch_size)
         init_window = ds.init_len
@@ -185,11 +197,15 @@ class BaseModule(nn.Module):
         y = format_batched_series(y, ds)
         return y,o
 
+    def extract_train(self, batch_size=None, device=None):
+        return self._extract_full_ts(self.tr_ds, batch_size, device)
+
     def extract_val(self, batch_size=None, device=None):
         return self._extract_full_ts(self.val_ds, batch_size, device)
 
-    def extract_train(self, batch_size=None, device=None):
-        return self._extract_full_ts(self.tr_ds, batch_size, device)
+    def extract_test(self, batch_size=None, device=None):
+        assert self.te_ds is not None, "Test dataset is not provided"
+        return self._extract_full_ts(self.te_ds, batch_size, device)
 
     def train_epoch_one_cluster(self, cluster_idx, n_iter=None, device=None):
         losses = []

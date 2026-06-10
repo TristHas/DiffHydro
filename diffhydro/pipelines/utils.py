@@ -13,7 +13,7 @@ PARAMS_BOUNDS = {
                             "D":  [ .1,   .9,   "low"],
                             "c":  [ .5,    12.5,  "mid"]},
                             index=["min", "max", "init"]),
-     "pure_lag":pd.DataFrame({"delay":[.1, 5, "low"]}, 
+     "pure_lag":pd.DataFrame({"delay":[0, 5, "low"]}, 
                              index=["min", "max", "init"]),
      "linear_storage":pd.DataFrame({"tau":[.1, 9.9, "mid"]}, 
                                    index=["min", "max", "init"]),

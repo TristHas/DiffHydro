@@ -7,7 +7,7 @@ from .routing import LearnedRouter
 from .. import Runoff
 
 class RRModel(nn.Module):
-    def __init__(self, 
+    def __init__(self,
                  param_model,
                  input_size = 1,
                  max_delay: int = 32,
@@ -15,12 +15,15 @@ class RRModel(nn.Module):
                  irf_name="hayami",
                  temp_res_h=1,
                  runoff_params={},
-                 routing_params={}):
-        """
-        """
+                 routing_params={},
+                 runoff_model=None):
+        """``runoff_model`` lets callers inject a custom runoff module (e.g. one
+        of the ensemble samplers); when None the default deterministic Runoff is
+        built from ``input_size``/``runoff_params``."""
         super().__init__()
         self.temp_res_h = temp_res_h
-        self.runoff_model = Runoff(input_size=input_size, 
+        self.runoff_model = runoff_model if runoff_model is not None else \
+                            Runoff(input_size=input_size,
                                    softplus=True,
                                    **runoff_params)
         self.routing_model = LearnedRouter( irf_name,

@@ -1,4 +1,7 @@
-from .modules import Runoff, LTIRouter, CatchmentInterpolator, StagedCatchmentInterpolator
+from .modules import (
+    Runoff, LSTM_inp_sampler, LSTM_out_sampler,
+    LTIRouter, CatchmentInterpolator, StagedCatchmentInterpolator,
+)
 
 from .structs import (
     DataTensor,
@@ -13,6 +16,8 @@ __all__ = [
     "StagedCatchmentInterpolator",
     "LTIRouter",
     "Runoff",
+    "LSTM_inp_sampler",
+    "LSTM_out_sampler",
     "DataTensor",
     "RivTree",
     "RivTreeCluster",

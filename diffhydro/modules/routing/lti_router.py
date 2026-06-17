@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import xtensor as xt
 
-from ...structs import ensure_bst_dims
+from ...structs import ensure_bst_dims, ensure_bste_dims
 
 from diffroute import (
     RivTree, RivTreeCluster,
@@ -26,19 +26,25 @@ class LTIRouter(nn.Module):
                 cluster_idx=None) -> xt.DataTensor:
         """
         """
+        # Validate the routing dims: batch, spatial, time and an optional
+        # ensemble axis (ordered after batch, before spatial/time), nothing else.
+        ensure_bste_dims(runoff)
         if cluster_idx is None:
             router = self.core.model if isinstance(g, RivTree) else \
                      self.core
-            discharge = router(runoff.values, g, params) 
-            return xt.DataTensor(discharge, dims=runoff.dims, 
+            discharge = router(runoff.values, g, params)
+            return xt.DataTensor(discharge, dims=runoff.dims,
                                  coords=runoff.coords,
                                  name="discharge")
         else:
             assert isinstance(g, RivTreeCluster), \
                    f"LTIRouter.forward only accepts cluster_idx \
                    for RivTreeCluster graphs, got {type(g)}"
-            return self._forward_seq(runoff, g, 
-                                     cluster_idx=cluster_idx, 
+            assert "ensemble" not in runoff.dims, \
+                   "Sequential cluster routing (cluster_idx) does not support " \
+                   "an ensemble axis; use the full (cluster_idx=None) path."
+            return self._forward_seq(runoff, g,
+                                     cluster_idx=cluster_idx,
                                      params=params)
             
     def _forward_seq(self, runoff: xt.DataTensor, gs, cluster_idx, params=None):

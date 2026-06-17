@@ -50,13 +50,21 @@ def format_param_bounds(irf_fn, runoff_temp_res_h):
 
 M3S_TO_MMKM2 = 10**12 / (3600 * 10**9)
 
+def _spatial_scale(values, per_spatial):
+    """Reshape a per-spatial vector to broadcast over the spatial axis (-2),
+    i.e. the last axis before time, regardless of any leading batch/ensemble
+    dims."""
+    shape = [1] * values.ndim
+    shape[-2] = -1
+    return per_spatial.to(values.device).view(*shape)
+
 def mm_to_m3s(runoff: xt.DataTensor, cat_area, temp_res_h=1): # TODO: handle other temporal resolution
-    scale = cat_area.to(runoff.values.device).view(1, -1, 1)
+    scale = _spatial_scale(runoff.values, cat_area)
     values = runoff.values * scale * M3S_TO_MMKM2 / temp_res_h
     return xt.DataTensor(values, dims=runoff.dims, coords=runoff.coords)
 
 def m3s_to_mm(discharge: xt.DataTensor, basin_area, temp_res_h=1):
-    scale = basin_area.to(discharge.values.device).view(1, -1, 1)
+    scale = _spatial_scale(discharge.values, basin_area)
     values = discharge.values / (scale * M3S_TO_MMKM2 / temp_res_h)
     return xt.DataTensor(values, dims=discharge.dims, coords=discharge.coords)
     

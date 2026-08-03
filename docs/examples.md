@@ -10,6 +10,8 @@ The `examples/` folder contains runnable notebooks that demonstrate DiffHydro on
 | `2. Routing Memory Management.ipynb` | GPU memory strategies | Shows how to stage routing kernels, chunk time windows, stream catchment interpolation on-the-fly, and transfer data between CPU/GPU when the full routing kernel cannot fit in memory. |
 | `3. Large Scale Routing Simulation.ipynb` | Basin-scale simulation | Runs a large RAPID simulation (~20 GB forcings, hundreds of thousands of reaches) with DiffRoute’s kernels, computes maximum discharge statistics, and optionally validates against original RAPID outputs (~700 GB). |
 | `4. Routing Calibration.ipynb` | Parameter calibration | Demonstrates the `CalibrationModule`, including sequential sub-basin calibration for extremely large graphs and reporting NSE scores through training. |
+| `5. Routing Learning.ipynb` | Learned routing parameters | Replaces hand-calibrated parameters with a `LearnedRouter`: a small network maps per-reach descriptors to IRF parameters and is trained by backpropagating through the routing convolution. |
+| `6. End-to-end Ono river (runoff + routing).ipynb` | Full differentiable pipeline | Trains runoff generation and routing jointly against gauge discharge on the Ono river with `RRModel`/`RRModule` — the smallest complete example of the end-to-end setup. |
 
 Each notebook shares the same structure:
 

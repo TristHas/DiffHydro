@@ -105,11 +105,11 @@ def load_rapid_graph_with_attributes(root, vpu, plength_thr=None, node_thr=None)
         g = dh.RivTreeCluster(clusters_g, 
                               node_transfer,
                               irf_fn = "muskingum",
-                              include_index_diag=True,
+                              route_src_reach=True,
                               param_df=params,
                               param_names=["dist", "upa"])
     else:
-        g = dh.RivTree(g, include_index_diag=True,
+        g = dh.RivTree(g, route_src_reach=True,
                        param_df=params,
                        param_names=["dist", "upa"],
                        irf_fn = "muskingum")

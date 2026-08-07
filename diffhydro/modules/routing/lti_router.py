@@ -34,7 +34,7 @@ class LTIRouter(nn.Module):
                      self.core
             discharge = router(runoff.values, g, params)
             return xt.DataTensor(discharge, dims=runoff.dims,
-                                 coords=runoff.coords,
+                                 coords=self._out_coords(runoff, g),
                                  name="discharge")
         else:
             assert isinstance(g, RivTreeCluster), \
@@ -47,6 +47,20 @@ class LTIRouter(nn.Module):
                                      cluster_idx=cluster_idx,
                                      params=params)
             
+    @staticmethod
+    def _out_coords(runoff: xt.DataTensor, g) -> dict:
+        """Coordinates of the routed discharge.
+
+        Same as the runoff's, unless the graph has been narrowed with
+        ``set_output_reach`` -- then the spatial axis carries the selected
+        reaches, in the order that call asked for, so the result stays
+        self-describing and the caller never has to track which row is which.
+        """
+        out_reach = getattr(g, "output_reach", None)
+        if out_reach is None:
+            return runoff.coords
+        return {**runoff.coords, "spatial": list(out_reach)}
+
     def _forward_seq(self, runoff: xt.DataTensor, gs, cluster_idx, params=None):
         if isinstance(params, torch.Tensor):
             params = [params[s:e] for s, e in gs.node_ranges[:cluster_idx+1]]

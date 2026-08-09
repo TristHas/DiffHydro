@@ -85,13 +85,24 @@ def coords_lookup(dtensor: xt.DataTensor) -> pd.Series:
     return pd.Series(np.arange(len(idx), dtype=np.int64), index=idx)
     
 class CatchmentInterpolator(nn.Module):
-    def __init__(self, g, pixel_runoff, weight_df):
+    def __init__(self, g, pixel_runoff, weight_df, nan_policy="propagate"):
         """
             weight_df: pd.DataFrame with index values in g nodes and columns pixel_idxs and area_sqm_total
             Maybe here we should assume that weight_df only contains the relevant pixels.
             So that when we interpolate the kernel, we interpolate it only for the needed inputs.
+
+            nan_policy (D22, non-breaking; default keeps current behavior):
+              "propagate"   — plain weighted index_add_, NaNs propagate.
+              "renormalize" — two-pass Σw·(x with NaN→0) ÷ Σw·valid(x); a node
+                              whose pixels are all NaN stays NaN. With
+                              normalized weights this is the weighted mean over
+                              valid pixels; with absolute-area weights it turns
+                              the sum into an area-weighted mean — only use it
+                              with fraction weights.
         """
         super().__init__()
+        assert nan_policy in ("propagate", "renormalize"), nan_policy
+        self.nan_policy = nan_policy
         input_pixel_idxs = coords_lookup(pixel_runoff["spatial"])
         output_cat_idxs = g.nodes_idx
         
@@ -108,7 +119,26 @@ class CatchmentInterpolator(nn.Module):
         self.map_out = output_cat_idxs
         self.n_cats = len(self.map_out)
         self.n_pix = len(self.map_inp)
-        
+
+    @classmethod
+    def from_tensors(cls, dest_idxs, src_idxs, weights, out_index, n_pix,
+                     nan_policy="propagate"):
+        """Build directly from precomputed (R,) tensors (hydro_data gen-2 W4.3):
+        dest_idxs/src_idxs are positions into out_index / the pixel ordering."""
+        self = cls.__new__(cls)
+        nn.Module.__init__(self)
+        assert nan_policy in ("propagate", "renormalize"), nan_policy
+        self.nan_policy = nan_policy
+        self.register_buffer("dest_idxs", torch.as_tensor(dest_idxs, dtype=torch.long))
+        self.register_buffer("src_idxs", torch.as_tensor(src_idxs, dtype=torch.long))
+        self.register_buffer("weights", torch.as_tensor(weights, dtype=torch.float))
+        self.map_out = pd.Series(np.arange(len(out_index), dtype=np.int64),
+                                 index=pd.Index(out_index))
+        self.map_inp = pd.Series(np.arange(int(n_pix), dtype=np.int64))
+        self.n_cats = len(self.map_out)
+        self.n_pix = int(n_pix)
+        return self
+
     def interpolate_runoff(self, runoff):
         """
             runoff is expected to be arranged according to the nodes_idx of g?
@@ -118,11 +148,21 @@ class CatchmentInterpolator(nn.Module):
         native_dtype = runoff.dtype
         runoff = runoff.to(dtype=self.weights.dtype)
         
-        weighted_x = runoff.values[:, self.src_idxs] * self.weights[None, :, None]  # broadcasts over the time dimension
+        x = runoff.values[:, self.src_idxs]
         out_size = runoff.shape[0], self.n_cats, runoff.shape[-1]
-        out = torch.zeros(out_size, 
-                          dtype=runoff.dtype, device=runoff.device)
-        out.index_add_(1, self.dest_idxs, weighted_x)
+        if getattr(self, "nan_policy", "propagate") == "renormalize":
+            valid = torch.isfinite(x)
+            w = self.weights[None, :, None]
+            num = torch.zeros(out_size, dtype=runoff.dtype, device=runoff.device)
+            num.index_add_(1, self.dest_idxs, torch.where(valid, x, torch.zeros_like(x)) * w)
+            den = torch.zeros(out_size, dtype=runoff.dtype, device=runoff.device)
+            den.index_add_(1, self.dest_idxs, valid.to(x.dtype) * w)
+            out = num / den   # 0/0 -> NaN where a node has no valid pixel
+        else:
+            weighted_x = x * self.weights[None, :, None]  # broadcasts over the time dimension
+            out = torch.zeros(out_size, 
+                              dtype=runoff.dtype, device=runoff.device)
+            out.index_add_(1, self.dest_idxs, weighted_x)
         return xt.DataTensor(
             out.to(dtype=native_dtype),
             coords={"batch":runoff["batch"],
